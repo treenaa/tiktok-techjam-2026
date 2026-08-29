@@ -15,6 +15,10 @@
     of the robustness evaluation grid.
 
 ``torch`` is imported lazily so the module can be used (and tested) without it.
+
+Pixels are decoded by :mod:`src.data.loading`, which every consumer -- training,
+evaluation and inference -- shares, so the corrupt-file policy and colour
+handling cannot drift between them.
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Unio
 from PIL import Image
 
 from .contract import MODE_PAIRED, MODE_STANDARD, validate_sample
+from .loading import ImageLoadError, default_loader, make_loader
 from .schema import ManifestRecord, label_counts, validate_records
 from .transforms import Identity, Transform, get_eval_transform
 
@@ -46,14 +51,6 @@ __all__ = [
 ]
 
 TransformLike = Union[Callable[["Image.Image"], Any], str, None]
-
-
-def default_loader(path: str) -> "Image.Image":
-    """Load an image as RGB, fully decoded (safe to use with DataLoader workers)."""
-    with open(path, "rb") as fh:
-        img = Image.open(fh)
-        img.load()
-    return img if img.mode == "RGB" else img.convert("RGB")
 
 
 def _resolve_transform(transform: TransformLike) -> Optional[Callable]:

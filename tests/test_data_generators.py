@@ -238,3 +238,32 @@ def test_assert_generators_disjoint_detects_a_leak():
 def test_assert_generators_disjoint_requires_the_holdout_split():
     with pytest.raises(LeakageError, match="not present"):
         assert_generators_disjoint({"train": make_records()}, holdout_split="test")
+
+
+# -- regression: unseen-domain purity --------------------------------------
+def test_holdout_split_contains_only_held_out_generators():
+    """Regression: seen-generator AIGC must not leak into the holdout split.
+
+    A 15% slice of *seen* AIGC used to be routed into the holdout split
+    alongside the real images, which silently contaminated the cross-generator
+    number with in-distribution samples.
+    """
+    from src.data import list_field_values, split_by_field_holdout
+
+    records = make_records()
+    for splits in (
+        split_by_generator_holdout(records, holdout=["delta"], seed=0),
+        split_by_field_holdout(records, field="generator", holdout=["delta"], seed=0),
+    ):
+        assert list_field_values(splits["test"], "generator") == ["delta"]
+        assert {r.generator for r in splits["test"] if r.label == 1} == {"delta"}
+        assert {r.label for r in splits["test"]} == {0, 1}, "must stay two-class"
+
+
+def test_every_seen_generator_still_reaches_training():
+    from src.data import list_field_values, split_by_field_holdout
+
+    records = make_records()
+    splits = split_by_field_holdout(records, field="generator", holdout=["delta"], seed=0)
+    seen = set(GENERATORS) - {"delta"}
+    assert set(list_field_values(splits["train"], "generator")) == seen

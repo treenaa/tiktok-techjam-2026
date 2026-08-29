@@ -361,11 +361,30 @@ def split_by_field_holdout(
         (name, []) for name in ("train", "val", holdout_split)
     )
     if rest:
-        ratios = (
-            {"train": 1.0 - val_ratio - 0.15, "val": val_ratio, holdout_split: 0.15}
-            if holdout_label is not None
-            else {"train": 1.0 - val_ratio, "val": val_ratio}
-        )
+        # Real images must reach every split, or the holdout split is
+        # single-class. AIGC images from *seen* domains must NOT reach the
+        # holdout split -- that would contaminate the unseen-domain measurement
+        # with seen-domain samples. So route them separately.
+        if holdout_label is None:
+            ratios = {"train": 1.0 - val_ratio, "val": val_ratio}
+        else:
+            seen_domain = [r for r in rest if r.label == holdout_label]
+            other = [r for r in rest if r.label != holdout_label]
+            if seen_domain:
+                seen_splits = split_records(
+                    seen_domain,
+                    ratios=({"train": 1.0 - val_ratio, "val": val_ratio}
+                            if val_ratio else {"train": 1.0}),
+                    seed=seed, stratify_keys=(field,), verify=False,
+                )
+                for name, members in seen_splits.items():
+                    out.setdefault(name, []).extend(members)
+            rest = other
+            ratios = {
+                "train": max(1.0 - val_ratio - 0.15, 0.0),
+                "val": val_ratio,
+                holdout_split: 0.15,
+            }
         rest_splits = split_records(
             rest, ratios=ratios, seed=seed, stratify_keys=("label",), verify=False
         )
