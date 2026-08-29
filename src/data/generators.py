@@ -15,7 +15,7 @@ import random
 from collections import OrderedDict
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from .schema import LABEL_AIGC, LABEL_REAL, DataError, ManifestRecord
+from .schema import LABEL_AIGC, LABEL_REAL, DataError, ManifestRecord, getattr_field
 from .splitting import (
     LeakageError,
     assert_no_source_id_leakage,
@@ -23,6 +23,9 @@ from .splitting import (
 )
 
 __all__ = [
+    "list_field_values",
+    "split_by_field_holdout",
+    "assert_field_disjoint",
     "list_generators",
     "generator_counts",
     "group_by_generator",
@@ -252,4 +255,149 @@ def assert_generators_disjoint(
         raise LeakageError(
             "generator leakage: %s appear both in %r and in other splits"
             % (sorted(shared), holdout_split)
+        )
+
+
+# ==========================================================================
+# Generic field-holdout (rule 11.C: unseen dataset / source / generator)
+# ==========================================================================
+def list_field_values(
+    records: Iterable[ManifestRecord],
+    field: str = "generator",
+    label: Optional[int] = None,
+    include_empty: bool = False,
+) -> List[str]:
+    """Sorted unique values of ``field``, optionally restricted to one label.
+
+    Works on any record attribute or ``extra`` key -- ``dataset``, ``generator``,
+    or a project-specific column such as ``source_domain``.
+    """
+    values = set()
+    for record in records:
+        if label is not None and record.label != label:
+            continue
+        value = str(getattr_field(record, field))
+        if value or include_empty:
+            values.add(value)
+    return sorted(values)
+
+
+def split_by_field_holdout(
+    records: Iterable[ManifestRecord],
+    field: str = "generator",
+    holdout: Optional[Sequence[str]] = None,
+    n_holdout: Optional[int] = None,
+    seed: int = 0,
+    val_ratio: float = 0.15,
+    holdout_split: str = "test",
+    holdout_label: Optional[int] = LABEL_AIGC,
+    verify: bool = True,
+) -> "OrderedDict[str, List[ManifestRecord]]":
+    """Hold out whole values of ``field`` so they appear only in one split.
+
+    The generic form of :func:`split_by_generator_holdout`, used for
+    cross-source protocols such as "train on CIFAKE + WildFake, test on an
+    unseen dataset".
+
+    Parameters
+    ----------
+    field:
+        Metadata column defining the domain (``"dataset"``, ``"generator"``,
+        or any ``extra`` key).
+    holdout_label:
+        Restrict holding-out to records of this label -- for ``generator`` only
+        AIGC records carry a value.  Pass ``None`` to hold out both classes of
+        the named domains, which is what you want for an unseen *dataset*
+        protocol.
+
+    Notes
+    -----
+    ``source_id`` grouping is preserved, so no transformed derivative crosses a
+    split.  When ``holdout_label`` is ``None`` the holdout split contains only
+    the held-out domains, so it may be single-class if those domains are; check
+    the result before using it for threshold tuning.
+    """
+    records = list(records)
+    subject = [r for r in records if holdout_label is None or r.label == holdout_label]
+    available = list_field_values(subject, field=field)
+    if not available:
+        raise DataError(
+            "no values for field %r -- holdout splitting needs that column populated" % field
+        )
+
+    if holdout is not None:
+        held = sorted(set(holdout))
+        unknown = [h for h in held if h not in available]
+        if unknown:
+            raise DataError("holdout %s not present in %r; available: %s" % (unknown, field, available))
+    elif n_holdout is not None:
+        if not 0 < n_holdout < len(available):
+            raise DataError(
+                "n_holdout must be in (0, %d) for %d values of %r, got %r"
+                % (len(available), len(available), field, n_holdout)
+            )
+        held = sorted(random.Random(seed).sample(available, n_holdout))
+    else:
+        raise DataError("pass either holdout=[...] or n_holdout=N")
+
+    held_set = set(held)
+    if not [v for v in available if v not in held_set]:
+        raise DataError("holding out %s would leave nothing to train on" % held)
+
+    def _is_held(record: ManifestRecord) -> bool:
+        if holdout_label is not None and record.label != holdout_label:
+            return False
+        return str(getattr_field(record, field)) in held_set
+
+    held_records = [r for r in records if _is_held(r)]
+    rest = [r for r in records if not _is_held(r)]
+    if not held_records:
+        raise DataError("no records matched holdout %s on field %r" % (held, field))
+
+    if not 0.0 <= val_ratio < 1.0:
+        raise ValueError("val_ratio must be in [0, 1), got %r" % (val_ratio,))
+
+    out: "OrderedDict[str, List[ManifestRecord]]" = OrderedDict(
+        (name, []) for name in ("train", "val", holdout_split)
+    )
+    if rest:
+        ratios = (
+            {"train": 1.0 - val_ratio - 0.15, "val": val_ratio, holdout_split: 0.15}
+            if holdout_label is not None
+            else {"train": 1.0 - val_ratio, "val": val_ratio}
+        )
+        rest_splits = split_records(
+            rest, ratios=ratios, seed=seed, stratify_keys=("label",), verify=False
+        )
+        for name, members in rest_splits.items():
+            out.setdefault(name, []).extend(members)
+    out[holdout_split].extend(held_records)
+
+    if verify:
+        assert_no_source_id_leakage(out)
+        assert_field_disjoint(out, field=field, holdout_split=holdout_split, holdout=held)
+    return out
+
+
+def assert_field_disjoint(
+    splits: Mapping[str, Sequence[ManifestRecord]],
+    field: str = "generator",
+    holdout_split: str = "test",
+    holdout: Optional[Sequence[str]] = None,
+) -> None:
+    """Assert held-out ``field`` values appear only in ``holdout_split``."""
+    if holdout_split not in splits:
+        raise LeakageError("holdout split %r not present in %s" % (holdout_split, list(splits)))
+    held = set(holdout) if holdout is not None else set(
+        list_field_values(splits[holdout_split], field=field)
+    )
+    leaked = set()
+    for name, members in splits.items():
+        if name == holdout_split:
+            continue
+        leaked |= held & set(list_field_values(members, field=field))
+    if leaked:
+        raise LeakageError(
+            "%s leakage: %s appear both in %r and in other splits"
+            % (field, sorted(leaked), holdout_split)
         )

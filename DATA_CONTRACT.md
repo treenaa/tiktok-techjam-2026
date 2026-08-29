@@ -207,6 +207,66 @@ dataset/generator combinations, empty splits, single-class splits.
 
 ---
 
+## 6b. Protected data (rule 11.B) — NON-NEGOTIABLE
+
+The competition's demonstration subset must **never** be trained or
+model-selected on:
+
+| Subset | Label | Images |
+| --- | --- | --- |
+| COCO val2017 | `0` real | 4998 |
+| DALL·E Advanced | `1` AIGC | 8843 |
+
+`validate_splits` enforces this **by default**. Protected data is recognised
+from its `dataset` column *or* its path, so a mislabelled column does not defeat
+the guard. It is permitted only in a split named `demo`, `demonstration`,
+`benchmark` or `reference` — anywhere else (train, **val**, **test**) is a hard
+failure, because val/test drive model selection and the final number.
+
+```python
+from src.data import assert_not_trainable, partition_protected
+
+assert_not_trainable(records)                    # before any fit()
+trainable, demo_only = partition_protected(pooled_records)
+```
+
+`allow_protected=True` exists as an escape hatch but must be a deliberate,
+reviewable change at the call site. Never set it to silence a failure.
+
+---
+
+## 6c. Shortcut auditing (rule 11.C)
+
+`audit_shortcuts` reports how easily a model could cheat by learning dataset
+identity instead of AI-ness — the "fake 98% accuracy" trap:
+
+```python
+from src.data import audit_shortcuts, format_audit_report
+print(format_audit_report(audit_shortcuts(train_records)))
+```
+
+Checks provenance (is `dataset` a perfect label predictor?), resolution,
+encoding, file size, and generator concentration. Advisory by default —
+findings carry `info` / `warning` / `critical`. **Report the findings in the
+write-up rather than hiding them**; some skew is unavoidable at hackathon scale,
+but unreported skew invalidates the headline number.
+
+---
+
+## 6d. Reproducibility (rule 20.9)
+
+```python
+from src.data import seed_everything, dataloader_kwargs
+
+seed_everything(42)                                     # python + numpy + torch
+DataLoader(ds, batch_size=32, shuffle=True, **dataloader_kwargs(seed=42, num_workers=4))
+```
+
+`dataloader_kwargs` supplies a seeded `generator` and `worker_init_fn`. Without
+the latter, NumPy-based augmentation can draw *identical* values in every worker.
+
+---
+
 ## 7. Integration checklist
 
 ```python
@@ -214,7 +274,8 @@ from src.data import (read_manifest, ManifestDataset, PairedViewDataset,
                       build_preprocess, validate_splits, validate_batch,
                       get_eval_transform, list_eval_transforms)
 
-validate_splits(train_csv, val_csv, test_csv)              # 1. gate
+seed_everything(42)                                        # 0. reproducibility
+validate_splits(train_csv, val_csv, test_csv)              # 1. gate (incl. rule 11.B)
 pre = build_preprocess("ijepa", image_size=224)            # 2. model's choice
 ds  = PairedViewDataset(read_manifest(train_csv), preprocess=pre)
 validate_batch(next(iter(DataLoader(ds, batch_size=32))), mode="paired")

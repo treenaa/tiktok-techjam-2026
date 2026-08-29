@@ -18,7 +18,29 @@ See ``src/data/README.md`` for the full API notes.
 
 from __future__ import annotations
 
+from .audit import (
+    ShortcutFinding,
+    audit_shortcuts,
+    encoding_shortcut,
+    format_audit_report,
+    generator_concentration,
+    provenance_shortcut,
+    resolution_shortcut,
+)
 from .build import generate_manifest, generate_split_manifests
+from .config import DatasetConfigError, build_from_config, load_config
+from .protected import (
+    DEMO_SPLIT_NAMES,
+    PROTECTED_DATASETS,
+    ProtectedDataError,
+    assert_not_trainable,
+    classify_protected,
+    find_protected_records,
+    partition_protected,
+    protected_report,
+    register_protected_dataset,
+)
+from .seeding import dataloader_kwargs, make_generator, seed_everything, seed_worker
 from .contract import (
     IMAGE_KEYS,
     MODE_PAIRED,
@@ -37,7 +59,10 @@ from .contract import (
     validate_sample,
 )
 from .generators import (
+    assert_field_disjoint,
     assert_generators_disjoint,
+    list_field_values,
+    split_by_field_holdout,
     filter_by_generator,
     generator_counts,
     group_by_generator,
@@ -49,6 +74,7 @@ from .synthetic import SyntheticBundle, make_synthetic_dataset, make_synthetic_i
 from .validation import (
     ValidationReport,
     find_derivative_leakage,
+    find_protected_data,
     find_forbidden_combinations,
     normalized_stem,
     validate_splits,
@@ -174,11 +200,24 @@ __all__ = [
     "STANDARD_OPTIONAL_KEYS", "PAIRED_REQUIRED_KEYS", "PAIRED_OPTIONAL_KEYS",
     # split validation
     "validate_splits", "ValidationReport", "find_derivative_leakage",
-    "find_forbidden_combinations", "normalized_stem",
+    "find_forbidden_combinations", "normalized_stem", "find_protected_data",
+    # protected / demonstration-only data (rule 11.B)
+    "PROTECTED_DATASETS", "DEMO_SPLIT_NAMES", "ProtectedDataError",
+    "classify_protected", "find_protected_records", "assert_not_trainable",
+    "partition_protected", "protected_report", "register_protected_dataset",
+    # shortcut auditing (rule 11.C)
+    "audit_shortcuts", "format_audit_report", "ShortcutFinding",
+    "provenance_shortcut", "resolution_shortcut", "encoding_shortcut",
+    "generator_concentration",
+    # reproducibility (rule 20.9)
+    "seed_everything", "seed_worker", "make_generator", "dataloader_kwargs",
+    # config-driven builds (rule 20.8)
+    "build_from_config", "load_config", "DatasetConfigError",
     # generator-aware splitting
     "list_generators", "generator_counts", "group_by_generator",
     "filter_by_generator", "partition_generators", "split_by_generator_holdout",
-    "assert_generators_disjoint",
+    "assert_generators_disjoint", "list_field_values", "split_by_field_holdout",
+    "assert_field_disjoint",
     # manifest generation
     "generate_manifest", "generate_split_manifests",
     # synthetic fixture

@@ -284,3 +284,65 @@ The two classes are deliberately learnable (AIGC images carry a periodic
 over-smooth structure), so an integration test can assert accuracy above chance
 without the task being trivial. Used by `tests/test_data_synthetic.py` to cover
 dataset → dataloader → train → evaluate end to end.
+
+
+## 10. Project-rule enforcement (third pass)
+
+### Protected demonstration data — rule 11.B
+
+COCO val2017 (4998 real) and DALL·E Advanced (8843 AIGC) are demonstration-only.
+`validate_splits` blocks them from train/val/test **by default**:
+
+```python
+from src.data import assert_not_trainable, partition_protected, protected_report
+
+assert_not_trainable(records)                     # raises ProtectedDataError
+trainable, demo_only = partition_protected(pooled)
+protected_report(records)                         # counts + expected-size drift
+```
+
+Recognition uses both the `dataset` column and the file path, so a wrong
+`dataset` value does not get past it. Route this data to a split named `demo`,
+`demonstration`, `benchmark` or `reference`. Extend the registry with
+`register_protected_dataset(...)`; never remove an entry.
+
+### Shortcut auditing — rule 11.C
+
+```python
+from src.data import audit_shortcuts, format_audit_report
+print(format_audit_report(audit_shortcuts(train_records)))
+```
+
+Flags provenance/resolution/encoding/file-size/generator shortcuts. Advisory
+(`raise_on_critical=True` to harden). Use `inspect_files=False` for a
+metadata-only audit.
+
+### Reproducibility — rule 20.9
+
+```python
+from src.data import seed_everything, dataloader_kwargs
+seed_everything(42, deterministic_torch=False)
+DataLoader(ds, shuffle=True, **dataloader_kwargs(seed=42, num_workers=4))
+```
+
+### Cross-source holdout — rule 11.C
+
+```python
+from src.data import split_by_field_holdout, list_field_values
+
+# unseen dataset (both classes held out)
+split_by_field_holdout(records, field="dataset", holdout=["sid_set"], holdout_label=None)
+# unseen generator (AIGC only)
+split_by_field_holdout(records, field="generator", n_holdout=2, seed=0)
+```
+
+### Config-driven builds — rule 20.8
+
+```python
+from src.data import build_from_config
+splits = build_from_config("configs/data.yaml")   # train/val/test [+ demo]
+```
+
+See `configs/data.example.yaml`. The `demo:` section is kept out of
+train/val/test automatically; listing protected data under `datasets:` is a hard
+error.

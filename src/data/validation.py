@@ -17,6 +17,12 @@ from collections import OrderedDict, defaultdict
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Union
 
 from .manifest import read_manifest
+from .protected import (
+    DEMO_SPLIT_NAMES,
+    PROTECTED_DATASETS,
+    find_protected_records,
+    protected_report,
+)
 from .schema import ManifestRecord
 from .source_id import strip_transform_suffixes
 from .splitting import LeakageError, split_report
@@ -27,6 +33,7 @@ __all__ = [
     "normalized_stem",
     "find_derivative_leakage",
     "find_forbidden_combinations",
+    "find_protected_data",
 ]
 
 ManifestLike = Union[str, Iterable[ManifestRecord]]
@@ -196,6 +203,34 @@ def find_forbidden_combinations(
     return problems
 
 
+def find_protected_data(
+    splits: Mapping[str, Sequence[ManifestRecord]],
+    demo_split_names: Sequence[str] = DEMO_SPLIT_NAMES,
+    max_report: int = 5,
+) -> List[str]:
+    """Demonstration-only data sitting in a split that is not demo-only.
+
+    Enforces project rule 11.B.  Protected data is permitted only in splits
+    named in ``demo_split_names``; anywhere else -- train, val, test -- is a
+    hard error, because val/test drive model selection and the final number.
+    """
+    allowed = {str(n).lower() for n in demo_split_names}
+    problems: List[str] = []
+    for split_name, records in splits.items():
+        if str(split_name).lower() in allowed:
+            continue
+        for key, members in find_protected_records(records).items():
+            spec = PROTECTED_DATASETS[key]
+            examples = [r.image_path for r in members[:max_report]]
+            problems.append(
+                "split %r contains %d record(s) from the demonstration-only subset "
+                "%r (%s); this data must never be trained or selected on "
+                "(rule 11.B). Examples: %s"
+                % (split_name, len(members), key, spec.description, examples)
+            )
+    return problems
+
+
 def validate_splits(
     train_manifest: ManifestLike = None,
     val_manifest: ManifestLike = None,
@@ -203,6 +238,9 @@ def validate_splits(
     extra_splits: Optional[Mapping[str, ManifestLike]] = None,
     group_keys: Sequence[str] = ("source_id",),
     check_derivatives: bool = True,
+    check_protected: bool = True,
+    allow_protected: bool = False,
+    demo_split_names: Sequence[str] = DEMO_SPLIT_NAMES,
     forbidden: Optional[Mapping[str, Mapping[str, Sequence[Any]]]] = None,
     require_nonempty: bool = True,
     require_both_labels: bool = True,
@@ -222,12 +260,20 @@ def validate_splits(
     * the same file path in more than one split;
     * transformed derivatives split apart, inferred from filenames even when
       ``source_id`` disagrees (``check_derivatives``);
+    * demonstration-only data (COCO val2017 / DALL-E Advanced) in any split that
+      is not demo-only -- **on by default**, see :mod:`src.data.protected`;
     * configured forbidden dataset/generator/source combinations
       (``forbidden``);
     * empty splits and single-class splits, which silently break training.
 
     Parameters
     ----------
+    allow_protected:
+        Disables the rule-11.B guard.  Requires a deliberate, reviewable change
+        at the call site -- never set it to silence a failure.
+    demo_split_names:
+        Split names permitted to hold protected data (default: ``demo``,
+        ``demonstration``, ``benchmark``, ``reference``).
     raise_on_failure:
         ``True`` (default) raises :class:`LeakageError` with the full report.
         ``False`` returns the report so callers can inspect ``.problems``.
@@ -257,7 +303,11 @@ def validate_splits(
                 structural.append("split %r is empty" % name)
             continue
         labels = {rec.label for rec in records}
-        if require_both_labels and labels != {0, 1}:
+        # A demonstration split may legitimately be single-class: COCO val2017
+        # is all real and DALL-E Advanced all AIGC, and they are reported
+        # separately rather than as one balanced set.
+        is_demo = str(name).lower() in {str(n).lower() for n in demo_split_names}
+        if require_both_labels and not is_demo and labels != {0, 1}:
             structural.append(
                 "split %r contains only label(s) %s -- both 0 (real) and 1 (aigc) are required"
                 % (name, sorted(labels))
@@ -302,11 +352,19 @@ def validate_splits(
     )
     if check_derivatives:
         report.add("derivative_leakage", find_derivative_leakage(populated))
+    if check_protected and not allow_protected:
+        report.add(
+            "protected_data",
+            find_protected_data(populated, demo_split_names=demo_split_names),
+        )
     if forbidden:
         report.add("forbidden_combination", find_forbidden_combinations(populated, forbidden))
 
     report.stats = split_report(populated, group_keys=group_keys) if populated else {"splits": {}}
     report.stats["n_splits"] = len(splits)
+    report.stats["protected"] = protected_report(
+        [rec for members in populated.values() for rec in members]
+    )
 
     if raise_on_failure:
         report.raise_if_failed()
