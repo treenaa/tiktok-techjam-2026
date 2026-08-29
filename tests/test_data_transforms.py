@@ -58,14 +58,14 @@ def test_required_parameters_are_present():
 def test_registry_contains_every_named_transform():
     expected = {
         "clean",
-        "jpeg_q90", "jpeg_q70", "jpeg_q50", "jpeg_q30",
-        "blur_sigma0.5", "blur_sigma1.0", "blur_sigma2.0",
-        "resize_0.5x", "resize_0.25x",
-        "noise_sigma0.02", "noise_sigma0.05", "noise_sigma0.10",
+        "jpeg_90", "jpeg_70", "jpeg_50", "jpeg_30",
+        "blur_0.5", "blur_1.0", "blur_2.0",
+        "resize_0.5", "resize_0.25",
+        "noise_0.02", "noise_0.05", "noise_0.10",
         "jitter_brightness_up", "jitter_brightness_down",
         "jitter_contrast_up", "jitter_contrast_down",
         "jitter_saturation_up", "jitter_saturation_down",
-        "crop_0.8",
+        "crop_0.80",
     }
     assert set(TRANSFORM_REGISTRY) == expected
     assert set(EVAL_TRANSFORM_NAMES) == expected
@@ -114,14 +114,14 @@ def test_clean_is_an_identity_but_returns_a_copy(img):
 
 
 def test_transform_objects_expose_name_family_and_params():
-    t = get_transform("jpeg_q30")
-    assert t.name == "jpeg_q30" and t.family == "jpeg" and t.params == {"quality": 30}
+    t = get_transform("jpeg_30")
+    assert t.name == "jpeg_30" and t.family == "jpeg" and t.params == {"quality": 30}
     assert "quality=30" in repr(t)
 
 
 def test_non_image_input_is_rejected():
     with pytest.raises(TypeError, match="PIL.Image"):
-        get_transform("jpeg_q50")(np.zeros((4, 4, 3)))
+        get_transform("jpeg_50")(np.zeros((4, 4, 3)))
 
 
 # -- per-family behaviour --------------------------------------------------
@@ -188,7 +188,7 @@ def test_center_crop_ratio_and_resize_back(img):
 
 def test_compose_applies_in_order_and_names_itself(img):
     chain = Compose([GaussianBlur(1.0), JPEGCompression(30)])
-    assert chain.name == "blur_sigma1.0+jpeg_q30"
+    assert chain.name == "blur_1.0+jpeg_30"
     assert chain(img).size == img.size
     assert diff(chain(img), img) > diff(GaussianBlur(1.0)(img), img)
 
@@ -245,7 +245,7 @@ def test_build_eval_suite(img):
     suite = build_eval_suite()
     assert len(suite) == len(EVAL_TRANSFORM_NAMES)
     assert all(t(img).size == img.size for t in suite.values())
-    assert set(build_eval_suite(["clean", "jpeg_q30"])) == {"clean", "jpeg_q30"}
+    assert set(build_eval_suite(["clean", "jpeg_30"])) == {"clean", "jpeg_30"}
 
 
 # -- B. stochastic sampling ------------------------------------------------

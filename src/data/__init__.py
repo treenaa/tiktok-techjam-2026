@@ -18,6 +18,41 @@ See ``src/data/README.md`` for the full API notes.
 
 from __future__ import annotations
 
+from .build import generate_manifest, generate_split_manifests
+from .contract import (
+    IMAGE_KEYS,
+    MODE_PAIRED,
+    MODE_STANDARD,
+    MODES,
+    PAIRED_OPTIONAL_KEYS,
+    PAIRED_REQUIRED_KEYS,
+    STANDARD_OPTIONAL_KEYS,
+    STANDARD_REQUIRED_KEYS,
+    SchemaError,
+    all_keys,
+    describe_contract,
+    optional_keys,
+    required_keys,
+    validate_batch,
+    validate_sample,
+)
+from .generators import (
+    assert_generators_disjoint,
+    filter_by_generator,
+    generator_counts,
+    group_by_generator,
+    list_generators,
+    partition_generators,
+    split_by_generator_holdout,
+)
+from .synthetic import SyntheticBundle, make_synthetic_dataset, make_synthetic_images
+from .validation import (
+    ValidationReport,
+    find_derivative_leakage,
+    find_forbidden_combinations,
+    normalized_stem,
+    validate_splits,
+)
 from .adapters import (
     ADAPTERS,
     DEFAULT_CLASS_MAP,
@@ -87,6 +122,8 @@ from .splitting import (
 )
 from .transforms import (
     EVAL_TRANSFORM_NAMES,
+    OFFICIAL_TRANSFORM_NAMES,
+    TRANSFORM_ALIASES,
     TRANSFORM_FAMILIES,
     TRANSFORM_REGISTRY,
     CenterCropResize,
@@ -100,7 +137,11 @@ from .transforms import (
     ResizeRoundTrip,
     Transform,
     build_eval_suite,
+    canonical_transform_name,
+    describe_eval_transforms,
+    get_eval_transform,
     get_transform,
+    list_eval_transforms,
     list_transforms,
 )
 
@@ -126,11 +167,30 @@ __all__ = [
     "split_records", "split_by_source_id", "assign_splits", "DEFAULT_RATIOS",
     "LeakageError", "assert_no_source_id_leakage", "assert_no_path_overlap",
     "check_split_integrity", "split_report", "format_split_report",
+    # contract
+    "MODE_STANDARD", "MODE_PAIRED", "MODES", "SchemaError", "validate_sample",
+    "validate_batch", "required_keys", "optional_keys", "all_keys",
+    "describe_contract", "IMAGE_KEYS", "STANDARD_REQUIRED_KEYS",
+    "STANDARD_OPTIONAL_KEYS", "PAIRED_REQUIRED_KEYS", "PAIRED_OPTIONAL_KEYS",
+    # split validation
+    "validate_splits", "ValidationReport", "find_derivative_leakage",
+    "find_forbidden_combinations", "normalized_stem",
+    # generator-aware splitting
+    "list_generators", "generator_counts", "group_by_generator",
+    "filter_by_generator", "partition_generators", "split_by_generator_holdout",
+    "assert_generators_disjoint",
+    # manifest generation
+    "generate_manifest", "generate_split_manifests",
+    # synthetic fixture
+    "make_synthetic_dataset", "make_synthetic_images", "SyntheticBundle",
     # transforms
     "Transform", "Identity", "Compose", "JPEGCompression", "GaussianBlur",
     "ResizeRoundTrip", "GaussianNoise", "ColorJitter", "CenterCropResize",
-    "TRANSFORM_REGISTRY", "TRANSFORM_FAMILIES", "EVAL_TRANSFORM_NAMES",
-    "get_transform", "list_transforms", "build_eval_suite",
+    "TRANSFORM_REGISTRY", "TRANSFORM_FAMILIES", "TRANSFORM_ALIASES",
+    "EVAL_TRANSFORM_NAMES", "OFFICIAL_TRANSFORM_NAMES", "get_eval_transform",
+    "list_eval_transforms", "describe_eval_transforms",
+    "canonical_transform_name", "get_transform", "list_transforms",
+    "build_eval_suite",
     "RandomCompetitionTransform",
     # preprocessing
     "ImagePreprocessing", "build_preprocess", "NORMALIZATION_PRESETS",

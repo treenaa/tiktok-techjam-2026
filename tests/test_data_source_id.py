@@ -14,9 +14,9 @@ from src.data.transforms import EVAL_TRANSFORM_NAMES
     [
         "cat_017.png",
         "cat_017_jpeg70.png",
-        "cat_017_jpeg_q30.png",
+        "cat_017_jpeg_30.png",
         "cat_017_blur_1.0.png",
-        "cat_017_blur_sigma2.0.png",
+        "cat_017_blur_2.0.png",
         "cat_017_resize_0.25.png",
         "cat_017_noise_0.05.png",
         "cat_017_crop_0.8.png",

@@ -81,7 +81,7 @@ def test_full_pipeline(tmp_path):
         assert len(dataset) == len(splits["test"]), name
         assert dataset[0]["label"] == splits["test"][0].label, name
     clean = grid["clean"][0]["image"]
-    assert not torch.allclose(clean, grid["jpeg_q30"][0]["image"])
+    assert not torch.allclose(clean, grid["jpeg_30"][0]["image"])
 
 
 def test_training_epoch_smoke(tmp_path):

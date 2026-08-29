@@ -26,6 +26,7 @@ from .schema import (
 )
 
 __all__ = [
+    "CANONICAL_COLUMNS",
     "write_manifest",
     "read_manifest",
     "records_to_dataframe",
@@ -45,6 +46,12 @@ def _fmt_of(path: str, fmt: Optional[str]) -> str:
     return "csv"
 
 
+#: Always written, even when empty -- this is the documented manifest format
+#: (``image_path,label,source_id,dataset,generator``) that every consumer may
+#: rely on.  ``split`` and ``extra`` columns appear only when populated.
+CANONICAL_COLUMNS = ("image_path", "label", "source_id", "dataset", "generator")
+
+
 def _columns(records: Sequence[ManifestRecord], drop_empty: bool = True) -> List[str]:
     cols = list(MANIFEST_COLUMNS)
     for rec in records:
@@ -52,10 +59,9 @@ def _columns(records: Sequence[ManifestRecord], drop_empty: bool = True) -> List
             if key not in cols:
                 cols.append(key)
     if drop_empty:
-        # Drop optional columns nobody populated (usually ``split``).
-        optional = [c for c in cols if c not in REQUIRED_COLUMNS]
-        for col in optional:
-            if all(not str(rec.to_row().get(col, "")) for rec in records):
+        rows = [rec.to_row() for rec in records]
+        for col in [c for c in cols if c not in CANONICAL_COLUMNS]:
+            if all(not str(row.get(col, "")) for row in rows):
                 cols.remove(col)
     return cols
 

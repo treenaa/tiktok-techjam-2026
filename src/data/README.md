@@ -7,11 +7,16 @@ datasets hand the model whatever preprocessing *the model owner* supplies.
 ```
 folders ──adapters──▶ [ManifestRecord] ──splitting──▶ train/val/test
                             │  ▲                          │
-                       manifest.py (CSV/JSON)             ▼
-                                                  ManifestDataset
-                                                  PairedViewDataset
-                                                  TransformedEvalDataset
+                       manifest.py (CSV/JSON)     validate_splits()  ← run before training
+                                                          ▼
+                                                  ManifestDataset          (standard mode)
+                                                  PairedViewDataset        (paired mode)
+                                                  TransformedEvalDataset   (robustness grid)
 ```
+
+**The exact batch schemas and transform names live in
+[`DATA_CONTRACT.md`](../../DATA_CONTRACT.md)** — read that first if you are
+consuming this package. `src/data/contract.py` is its executable form.
 
 ## Quick start
 
@@ -36,7 +41,7 @@ val   = ManifestDataset(splits["val"], preprocess=preprocess)
 
 ```python
 {"image": <PIL or tensor>, "label": 0|1, "source_id": str, "image_path": str,
- "dataset": str, "generator": str, "index": int, "transform": str}
+ "dataset": str, "generator": str, "index": int, "transform_name": str}
 ```
 
 **`source_id` is the load-bearing field.** It identifies the *underlying
@@ -183,3 +188,99 @@ destroy the very artifacts the detector keys on.
 
 `python3 -m pytest tests/ -q` — 259 tests, no dataset downloads (synthetic trees
 are built in `tmp_path` by `tests/test_data_fixtures.py`).
+
+
+## 9. Second-pass additions
+
+### Batch schema validation (`contract.py`)
+
+```python
+from src.data import validate_batch, validate_sample, MODE_STANDARD, MODE_PAIRED
+
+validate_batch(batch, mode=MODE_PAIRED, batch_size=32)   # raises SchemaError
+ManifestDataset(records, preprocess=pre).validate_schema()
+```
+
+Standard mode requires `image, label, source_id, image_path`; paired mode
+requires `clean, augmented, label, source_id, image_path`. Undocumented keys are
+rejected by default, so a drifting key name fails immediately rather than
+silently.
+
+### The transform registry
+
+```python
+from src.data import get_eval_transform, list_eval_transforms, describe_eval_transforms
+
+get_eval_transform("jpeg_30")        # jpeg_90/70/50/30
+get_eval_transform("blur_2.0")       # blur_0.5/1.0/2.0
+get_eval_transform("resize_0.25")    # resize_0.5/0.25
+get_eval_transform("noise_0.10")     # noise_0.02/0.05/0.10
+get_eval_transform("crop_0.80")      # crop_0.80
+list_eval_transforms()               # all 20 (clean first), stable order
+list_eval_transforms("jitter")       # 6 jitter variants, +-20%
+describe_eval_transforms()           # JSON-serialisable: name/family/params/severity
+```
+
+Old spellings (`jpeg_q30`, `blur_sigma2.0`, `resize_0.25x`, `crop_0.8`) still
+resolve through `canonical_transform_name`, but write canonical names into
+results.
+
+### Pre-training split gate
+
+```python
+from src.data import validate_splits
+
+validate_splits("manifests/train.csv", "manifests/val.csv", "manifests/test.csv",
+                forbidden={"test": {"generator": ["some_generator"]}})
+```
+
+Raises `LeakageError` listing *every* problem: `source_id` overlap, path
+overlap, filename-inferred derivative leakage (catches a bad `source_id` policy),
+forbidden dataset/generator combinations, empty and single-class splits. Pass
+`raise_on_failure=False` to inspect `report.problems` instead.
+
+### Generator-aware splits
+
+No generator name is hard-coded anywhere:
+
+```python
+from src.data import (list_generators, filter_by_generator,
+                      split_by_generator_holdout, assert_generators_disjoint)
+
+list_generators(records)                                    # discover what exists
+filter_by_generator(records, exclude=["sdxl"])              # keeps real images
+splits = split_by_generator_holdout(records, holdout=["sdxl"])   # unseen-generator test
+splits = split_by_generator_holdout(records, n_holdout=2, seed=0)
+assert_generators_disjoint(splits)
+```
+
+Held-out generators appear only in the holdout split; real images are spread
+across all splits so none is single-class; `source_id` grouping still holds.
+
+### Manifest generation
+
+```python
+from src.data import generate_manifest, generate_split_manifests
+
+generate_manifest("/data/cifake", adapter="cifake", out_path="manifests/cifake.csv")
+generate_split_manifests("/data/cifake", "manifests/", adapter="cifake", seed=0)
+```
+
+```bash
+python -m src.data.build --root /data/cifake --adapter cifake --out-dir manifests/
+```
+
+### Synthetic fixture (no downloads)
+
+```python
+from src.data.synthetic import make_synthetic_dataset
+
+bundle = make_synthetic_dataset(tmp_path)      # 24 images, 3 splits, manifests written
+bundle.train, bundle.val, bundle.test          # record lists
+bundle.train_manifest                          # CSV path
+```
+
+The two classes are deliberately learnable (AIGC images carry a periodic
+over-smooth structure), so an integration test can assert accuracy above chance
+without the task being trivial. Used by `tests/test_data_synthetic.py` to cover
+dataset → dataloader → train → evaluate end to end.

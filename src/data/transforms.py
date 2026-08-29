@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import io
 import random
+from collections import OrderedDict
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -37,7 +38,13 @@ __all__ = [
     "CenterCropResize",
     "TRANSFORM_REGISTRY",
     "TRANSFORM_FAMILIES",
+    "TRANSFORM_ALIASES",
     "EVAL_TRANSFORM_NAMES",
+    "OFFICIAL_TRANSFORM_NAMES",
+    "canonical_transform_name",
+    "get_eval_transform",
+    "list_eval_transforms",
+    "describe_eval_transforms",
     "get_transform",
     "list_transforms",
     "build_eval_suite",
@@ -121,7 +128,7 @@ class JPEGCompression(Transform):
             raise ValueError("jpeg quality must be in [1, 100], got %r" % (quality,))
         self.quality = int(quality)
         self.subsampling = subsampling
-        self.name = "jpeg_q%d" % self.quality
+        self.name = "jpeg_%d" % self.quality
 
     def apply(self, img):
         mode = img.mode
@@ -154,7 +161,7 @@ class GaussianBlur(Transform):
         if float(sigma) < 0:
             raise ValueError("blur sigma must be >= 0, got %r" % (sigma,))
         self.sigma = float(sigma)
-        self.name = "blur_sigma%s" % _fmt(self.sigma, decimals)
+        self.name = "blur_%s" % _fmt(self.sigma, decimals)
 
     def apply(self, img):
         if self.sigma == 0:
@@ -178,13 +185,19 @@ class ResizeRoundTrip(Transform):
 
     family = "resize"
 
-    def __init__(self, scale: float, down_filter=BILINEAR, up_filter=BICUBIC):
+    def __init__(
+        self,
+        scale: float,
+        down_filter=BILINEAR,
+        up_filter=BICUBIC,
+        decimals: Optional[int] = None,
+    ):
         if not 0 < float(scale) <= 1:
             raise ValueError("resize scale must be in (0, 1], got %r" % (scale,))
         self.scale = float(scale)
         self.down_filter = down_filter
         self.up_filter = up_filter
-        self.name = "resize_%sx" % _fmt(self.scale)
+        self.name = "resize_%s" % _fmt(self.scale, decimals)
 
     def apply(self, img):
         w, h = img.size
@@ -224,7 +237,7 @@ class GaussianNoise(Transform):
         self.sigma = float(sigma)
         self.seed = seed
         self.clip = clip
-        self.name = "noise_sigma%s" % _fmt(self.sigma, decimals)
+        self.name = "noise_%s" % _fmt(self.sigma, decimals)
         self._rng = np.random.default_rng(seed) if seed is None else None
 
     def _generator(self):
@@ -321,13 +334,19 @@ class CenterCropResize(Transform):
 
     family = "crop"
 
-    def __init__(self, ratio: float = 0.8, resize_back: bool = True, up_filter=BICUBIC):
+    def __init__(
+        self,
+        ratio: float = 0.8,
+        resize_back: bool = True,
+        up_filter=BICUBIC,
+        decimals: Optional[int] = None,
+    ):
         if not 0 < float(ratio) <= 1:
             raise ValueError("crop ratio must be in (0, 1], got %r" % (ratio,))
         self.ratio = float(ratio)
         self.resize_back = bool(resize_back)
         self.up_filter = up_filter
-        self.name = "crop_%s" % _fmt(self.ratio)
+        self.name = "crop_%s" % _fmt(self.ratio, decimals)
 
     def apply(self, img):
         w, h = img.size
@@ -382,7 +401,7 @@ for _q in JPEG_QUALITIES:
 for _s in BLUR_SIGMAS:
     _register(lambda s=_s: GaussianBlur(s, decimals=1))
 for _s in RESIZE_SCALES:
-    _register(lambda s=_s: ResizeRoundTrip(s))
+    _register(lambda s=_s: ResizeRoundTrip(s, decimals=2 if s < 0.5 else 1))
 for _s in NOISE_SIGMAS:
     _register(lambda s=_s: GaussianNoise(s, seed=0, decimals=2))
 for _ch in ("brightness", "contrast", "saturation"):
@@ -393,7 +412,7 @@ for _ch in ("brightness", "contrast", "saturation"):
             return t
 
         _register(_factory)
-_register(lambda: CenterCropResize(CROP_RATIO))
+_register(lambda: CenterCropResize(CROP_RATIO, decimals=2))
 
 #: ``family -> [names]``
 TRANSFORM_FAMILIES: Dict[str, List[str]] = {}
@@ -406,28 +425,147 @@ EVAL_TRANSFORM_NAMES: Tuple[str, ...] = ("clean",) + tuple(
 )
 
 
-def get_transform(name: str) -> Transform:
-    """Instantiate a named deterministic transform."""
-    try:
-        return TRANSFORM_REGISTRY[name]()
-    except KeyError:
-        raise KeyError(
-            "unknown transform %r; available: %s" % (name, sorted(TRANSFORM_REGISTRY))
-        ) from None
+#: Deprecated spellings kept resolvable so older manifests / result files do not
+#: break.  Canonical names are the keys of :data:`TRANSFORM_REGISTRY`.
+TRANSFORM_ALIASES: Dict[str, str] = {}
+for _q in JPEG_QUALITIES:
+    TRANSFORM_ALIASES["jpeg_q%d" % _q] = "jpeg_%d" % _q
+    TRANSFORM_ALIASES["jpeg%d" % _q] = "jpeg_%d" % _q
+for _s, _canon in zip(BLUR_SIGMAS, ("blur_0.5", "blur_1.0", "blur_2.0")):
+    TRANSFORM_ALIASES["blur_sigma%s" % _fmt(_s, 1)] = _canon
+    TRANSFORM_ALIASES["blur_%s" % _fmt(_s)] = _canon
+for _s, _canon in zip(RESIZE_SCALES, ("resize_0.5", "resize_0.25")):
+    TRANSFORM_ALIASES["resize_%sx" % _fmt(_s)] = _canon
+    TRANSFORM_ALIASES["resize_%s" % _fmt(_s)] = _canon
+for _s, _canon in zip(NOISE_SIGMAS, ("noise_0.02", "noise_0.05", "noise_0.10")):
+    TRANSFORM_ALIASES["noise_sigma%s" % _fmt(_s, 2)] = _canon
+    TRANSFORM_ALIASES["noise_%s" % _fmt(_s)] = _canon
+TRANSFORM_ALIASES.update({
+    "crop_0.8": "crop_0.80",
+    "identity": "clean",
+    "none": "clean",
+    "original": "clean",
+})
+TRANSFORM_ALIASES = {k: v for k, v in TRANSFORM_ALIASES.items() if k not in TRANSFORM_REGISTRY}
 
 
-def list_transforms(family: Optional[str] = None) -> List[str]:
-    if family is None:
-        return list(EVAL_TRANSFORM_NAMES)
-    if family not in TRANSFORM_FAMILIES:
-        raise KeyError("unknown family %r; available: %s" % (family, sorted(TRANSFORM_FAMILIES)))
-    return list(TRANSFORM_FAMILIES[family])
+def canonical_transform_name(name: str) -> str:
+    """Resolve an alias to its canonical registry name.
+
+    Accepts the canonical name unchanged, a known deprecated spelling, or a
+    case/whitespace variant.  Raises ``KeyError`` otherwise -- never guesses.
+    """
+    key = str(name).strip()
+    if key in TRANSFORM_REGISTRY:
+        return key
+    if key in TRANSFORM_ALIASES:
+        return TRANSFORM_ALIASES[key]
+    lowered = key.lower()
+    if lowered in TRANSFORM_REGISTRY:
+        return lowered
+    if lowered in TRANSFORM_ALIASES:
+        return TRANSFORM_ALIASES[lowered]
+    raise KeyError(
+        "unknown transform %r; official names: %s"
+        % (name, list(EVAL_TRANSFORM_NAMES))
+    )
+
+
+#: Explicit alias emphasising that these are the *official* competition
+#: transforms, ``clean`` included as the uncorrupted reference.
+OFFICIAL_TRANSFORM_NAMES = EVAL_TRANSFORM_NAMES
+
+
+def get_eval_transform(name: str) -> Transform:
+    """Instantiate an official benchmark transform by name.
+
+    The single entry point for evaluation code::
+
+        get_eval_transform("jpeg_30")
+        get_eval_transform("blur_2.0")
+        get_eval_transform("resize_0.25")
+        get_eval_transform("noise_0.10")
+        get_eval_transform("crop_0.80")
+
+    Returned transforms are deterministic: the same name applied to the same
+    image always yields identical pixels.  A fresh instance is returned per
+    call, so callers cannot share mutable RNG state by accident.
+    """
+    return TRANSFORM_REGISTRY[canonical_transform_name(name)]()
+
+
+#: Backwards-compatible alias of :func:`get_eval_transform`.
+get_transform = get_eval_transform
+
+
+def list_eval_transforms(
+    family: Optional[str] = None, include_clean: bool = True
+) -> List[str]:
+    """Enumerate the official benchmark transform names.
+
+    ``family`` restricts to one of ``jpeg``/``blur``/``resize``/``noise``/
+    ``jitter``/``crop``/``identity``.  Order is stable across processes:
+    ``clean`` first, then families in competition order.
+    """
+    if family is not None:
+        if family not in TRANSFORM_FAMILIES:
+            raise KeyError(
+                "unknown family %r; available: %s" % (family, sorted(TRANSFORM_FAMILIES))
+            )
+        return list(TRANSFORM_FAMILIES[family])
+    names = list(EVAL_TRANSFORM_NAMES)
+    return names if include_clean else [n for n in names if n != "clean"]
+
+
+#: Backwards-compatible alias of :func:`list_eval_transforms`.
+list_transforms = list_eval_transforms
+
+
+def describe_eval_transforms() -> "List[Dict[str, Any]]":
+    """Machine-readable spec of the benchmark: name, family and parameters.
+
+    Intended for evaluation code that reports a robustness grid and for
+    serialising exactly which corruption produced a number.
+    """
+    out = []
+    for name in EVAL_TRANSFORM_NAMES:
+        transform = TRANSFORM_REGISTRY[name]()
+        out.append(
+            {
+                "name": name,
+                "family": transform.family,
+                "params": transform.params,
+                "severity": _SEVERITY.get(name),
+            }
+        )
+    return out
+
+
+#: Ordinal severity within a family (0 = mildest).  ``None`` where the family
+#: has no natural ordering (jitter directions are symmetric).
+_SEVERITY: Dict[str, Optional[int]] = {"clean": 0}
+for _i, _q in enumerate(JPEG_QUALITIES):
+    _SEVERITY["jpeg_%d" % _q] = _i  # 90 -> 0 (mildest) ... 30 -> 3
+for _i, _s in enumerate(BLUR_SIGMAS):
+    _SEVERITY["blur_%s" % _fmt(_s, 1)] = _i
+for _i, _n in enumerate(("resize_0.5", "resize_0.25")):
+    _SEVERITY[_n] = _i
+for _i, _s in enumerate(NOISE_SIGMAS):
+    _SEVERITY["noise_%s" % _fmt(_s, 2)] = _i
+for _n in TRANSFORM_FAMILIES["jitter"]:
+    _SEVERITY[_n] = None
+_SEVERITY["crop_0.80"] = 0
 
 
 def build_eval_suite(names: Optional[Iterable[str]] = None) -> Dict[str, Transform]:
-    """``{name: transform}`` for robustness evaluation (defaults to all)."""
-    names = list(EVAL_TRANSFORM_NAMES) if names is None else list(names)
-    return {n: get_transform(n) for n in names}
+    """``{name: transform}`` for robustness evaluation (defaults to all).
+
+    Keys are canonical names even when aliases are passed in.
+    """
+    names = list(EVAL_TRANSFORM_NAMES) if names is None else [
+        canonical_transform_name(n) for n in names
+    ]
+    return OrderedDict((n, get_eval_transform(n)) for n in names)
 
 
 # ==========================================================================

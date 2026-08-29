@@ -24,8 +24,9 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Unio
 
 from PIL import Image
 
+from .contract import MODE_PAIRED, MODE_STANDARD, validate_sample
 from .schema import ManifestRecord, label_counts, validate_records
-from .transforms import Identity, Transform, get_transform
+from .transforms import Identity, Transform, get_eval_transform
 
 try:  # pragma: no cover - trivial import guard
     from torch.utils.data import Dataset as _TorchDataset
@@ -60,7 +61,7 @@ def _resolve_transform(transform: TransformLike) -> Optional[Callable]:
     if transform is None:
         return None
     if isinstance(transform, str):
-        return get_transform(transform)
+        return get_eval_transform(transform)
     if not callable(transform):
         raise TypeError("transform must be callable, a registry name, or None")
     return transform
@@ -96,8 +97,22 @@ class BaseImageDataset(_TorchDataset):
         self.preprocess = preprocess
         self.loader = loader
 
+    #: Contract mode this dataset emits (see :mod:`src.data.contract`).
+    mode: str = MODE_STANDARD
+
     def __len__(self) -> int:
         return len(self.records)
+
+    def validate_schema(self, index: int = 0, **kwargs: Any) -> Dict[str, Any]:
+        """Assert one sample satisfies the documented contract; return it.
+
+        Cheap pre-flight check for integration code::
+
+            ManifestDataset(records, preprocess=pre).validate_schema()
+        """
+        sample = self[index]
+        validate_sample(sample, mode=self.mode, **kwargs)
+        return sample
 
     # -- helpers ----------------------------------------------------------
     def path_at(self, index: int) -> str:
@@ -153,7 +168,7 @@ class BaseImageDataset(_TorchDataset):
 
 
 class ManifestDataset(BaseImageDataset):
-    """Single-view dataset.
+    """Single-view dataset -- emits the ``standard`` contract mode.
 
     Parameters
     ----------
@@ -171,7 +186,7 @@ class ManifestDataset(BaseImageDataset):
     Returns per item::
 
         {"image", "label", "source_id", "image_path", "dataset", "generator",
-         "index", "transform"}
+         "index", "transform_name"}
     """
 
     def __init__(
@@ -204,7 +219,7 @@ class ManifestDataset(BaseImageDataset):
         meta = self._meta(index)
         if self.return_metadata:
             sample.update(meta)
-            sample["transform"] = _transform_name(self.transform)
+            sample["transform_name"] = _transform_name(self.transform)
         else:
             sample["label"] = meta["label"]
             sample["source_id"] = meta["source_id"]
@@ -213,7 +228,7 @@ class ManifestDataset(BaseImageDataset):
 
 
 class PairedViewDataset(BaseImageDataset):
-    """Clean + transformed views of the same image, sharing label and source_id.
+    """Clean + transformed views of one image -- emits the ``paired`` mode.
 
     Parameters
     ----------
@@ -237,9 +252,9 @@ class PairedViewDataset(BaseImageDataset):
     Returns per item::
 
         {"clean", "augmented", "label", "source_id", "image_path", "dataset",
-         "generator", "index", "transform"}
+         "generator", "index", "transform_name"}
 
-    ``transform`` names the corruption actually applied, so training code can
+    ``transform_name`` names the corruption actually applied, so training code can
     log or condition on it.  This class produces views only -- no loss.
     """
 
@@ -263,6 +278,7 @@ class PairedViewDataset(BaseImageDataset):
             validate=validate,
             check_paths_exist=check_paths_exist,
         )
+        self.mode = MODE_PAIRED
         if augment is None:
             from .transforms import RandomCompetitionTransform
 
@@ -291,7 +307,7 @@ class PairedViewDataset(BaseImageDataset):
             "augmented": aug_preprocess(aug_img) if aug_preprocess is not None else aug_img,
         }
         sample.update(self._meta(index))
-        sample["transform"] = _transform_name(transform)
+        sample["transform_name"] = _transform_name(transform)
         return sample
 
 
@@ -303,7 +319,7 @@ class TransformedEvalDataset(ManifestDataset):
     """
 
     def __init__(self, records: Iterable[ManifestRecord], transform_name: str = "clean", **kwargs: Any):
-        kwargs["transform"] = get_transform(transform_name)
+        kwargs["transform"] = get_eval_transform(transform_name)
         super().__init__(records, **kwargs)
         self.transform_name = transform_name
 
