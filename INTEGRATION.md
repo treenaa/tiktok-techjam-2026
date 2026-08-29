@@ -166,6 +166,48 @@ loader = make_loader("placeholder")          # one bad file must not abort a run
 
 ---
 
+## Run the audit CLI before you trust a number
+
+```bash
+# leakage + protected-data gate (exit 1 blocks the run)
+python -m src.data.audit_cli splits   --config configs/baseline_clip.yaml
+python -m src.data.audit_cli splits   --train t.csv --val v.csv --test s.csv
+
+# rule 11.C: how easily could the model cheat on this corpus?
+python -m src.data.audit_cli shortcut --config configs/baseline_clip.yaml [--strict]
+
+# every image readable? (run before an inference batch)
+python -m src.data.audit_cli verify   --input ./images
+
+# rule 21: do these runs differ ONLY in `model`?
+python -m src.data.audit_cli compare  configs/baseline_*.yaml
+```
+
+Exit codes: `0` clean, `1` blocking problem, `2` bad usage — so these drop into
+CI unchanged. `--json` on any subcommand for machine-readable output.
+
+## Comparable baselines (rule 21)
+
+`configs/baseline_{clip,dino,ijepa}.yaml` share one split, seed, schedule and
+evaluation protocol; only `model:` differs. `compare` verifies this
+mechanically and prints a fingerprint per run — **identical fingerprints mean a
+metric gap is attributable to the backbone.** If you change a training setting,
+change it in all three (or the comparison is void, and `compare` will say so).
+
+```python
+from src.data import load_experiment, assert_comparable
+
+configs = [load_experiment("configs/baseline_%s.yaml" % n) for n in ("clip","dino","ijepa")]
+assert_comparable(configs)          # raises, naming the offending key
+splits = configs[0].build_splits()  # the one split all three share
+```
+
+`config.model`, `config.training`, `config.evaluation` are passed through
+untouched — Mateo and Trina own their contents and can add keys freely without
+touching `src/data`.
+
+---
+
 ## Guarantees you can rely on
 
 1. No `source_id` spans two splits — no transformed derivative leaks (rule 11.A).

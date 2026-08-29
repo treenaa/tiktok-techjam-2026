@@ -29,6 +29,14 @@ from .audit import (
 )
 from .build import generate_manifest, generate_split_manifests
 from .config import DatasetConfigError, build_from_config, load_config
+from .experiment import (
+    COMPARABILITY_KEYS,
+    ExperimentConfig,
+    assert_comparable,
+    comparability_report,
+    load_experiment,
+    save_experiment,
+)
 from .loading import (
     ON_ERROR_POLICIES,
     SUPPORTED_EXTENSIONS,
@@ -222,6 +230,9 @@ __all__ = [
     "seed_everything", "seed_worker", "make_generator", "dataloader_kwargs",
     # config-driven builds (rule 20.8)
     "build_from_config", "load_config", "DatasetConfigError",
+    # experiment config / comparability (rule 21)
+    "ExperimentConfig", "load_experiment", "save_experiment",
+    "comparability_report", "assert_comparable", "COMPARABILITY_KEYS",
     # shared image loading (rules 17, 20.6)
     "load_image", "make_loader", "list_images", "verify_images",
     "ImageLoadError", "SUPPORTED_EXTENSIONS", "ON_ERROR_POLICIES",
