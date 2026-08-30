@@ -41,7 +41,13 @@ from .config import (
     load_gpu_config,
 )
 from .determinism import CUDNN_CAVEATS, determinism_controls, determinism_report
-from .environment import collect_environment, environment_checks, resolve_device
+from .environment import (
+    collect_environment,
+    detect_display_adapters,
+    environment_checks,
+    has_nvidia_adapter,
+    resolve_device,
+)
 from .errors import GpuCheckError, gpu_error_context, is_out_of_memory
 from .fallbacks import (
     EXTERNAL_LEVERS,
@@ -91,6 +97,8 @@ __all__ = [
     "gpu_error_context",
     "is_out_of_memory",
     "collect_environment",
+    "detect_display_adapters",
+    "has_nvidia_adapter",
     "environment_checks",
     "resolve_device",
     "StubVisionBackbone",

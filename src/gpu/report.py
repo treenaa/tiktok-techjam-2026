@@ -176,6 +176,17 @@ def render_text(report: GpuReport, strict: bool = False) -> str:
         )
     if not devices:
         lines.append("  no CUDA devices visible")
+        adapters = (environment.get("display_adapters") or {}).get("adapters") or []
+        for adapter in adapters:
+            lines.append(
+                "  display adapter: %s%s"
+                % (
+                    adapter.get("name"),
+                    ""
+                    if not adapter.get("driver_version")
+                    else " (driver %s)" % adapter["driver_version"],
+                )
+            )
 
     if report.parameters:
         lines.append("")

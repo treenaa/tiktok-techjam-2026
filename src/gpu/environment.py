@@ -7,6 +7,7 @@ then compare those facts against what the run actually requires.
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import re
@@ -115,6 +116,91 @@ def query_nvidia_smi() -> Dict[str, Any]:
     }
 
 
+#: Matched against adapter names to decide whether CUDA is even possible here.
+NVIDIA_ADAPTER_PATTERN = re.compile(
+    r"nvidia|geforce|quadro|tesla|\brtx\b|\bgtx\b", re.IGNORECASE
+)
+
+
+def detect_display_adapters() -> Dict[str, Any]:
+    """Enumerate the physical display adapters, independently of CUDA.
+
+    Without this, "no CUDA device" is ambiguous between two situations that
+    need opposite remedies: a CUDA-capable card whose PyTorch build or driver
+    is wrong (fixable by reinstalling), and a machine with no NVIDIA hardware
+    at all (no PyTorch build will ever help). Telling someone to reinstall a
+    CUDA wheel on an integrated-graphics laptop wastes a large download and
+    ends where it started.
+    """
+    system = platform.system()
+    if system == "Windows":
+        return _windows_adapters()
+    if system == "Linux":
+        return _linux_adapters()
+    return {
+        "available": False,
+        "adapters": [],
+        "reason": "adapter enumeration is not implemented for %s" % system,
+    }
+
+
+def _windows_adapters() -> Dict[str, Any]:
+    output = _run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_VideoController | "
+            "Select-Object Name,AdapterRAM,DriverVersion | ConvertTo-Json -Compress",
+        ]
+    )
+    if not output or not output.strip():
+        return {"available": False, "adapters": [], "reason": "Win32_VideoController query failed"}
+    try:
+        payload = json.loads(output)
+    except ValueError:
+        return {"available": False, "adapters": [], "reason": "could not parse WMI JSON output"}
+    # ConvertTo-Json emits a bare object when there is exactly one adapter.
+    records = payload if isinstance(payload, list) else [payload]
+    adapters = [
+        {
+            "name": str(record.get("Name") or "unknown"),
+            "driver_version": record.get("DriverVersion"),
+            "dedicated_memory_bytes": record.get("AdapterRAM"),
+        }
+        for record in records
+        if isinstance(record, dict)
+    ]
+    return {"available": bool(adapters), "adapters": adapters, "source": "Win32_VideoController"}
+
+
+def _linux_adapters() -> Dict[str, Any]:
+    output = _run(["lspci"])
+    if output is None:
+        return {"available": False, "adapters": [], "reason": "lspci not found"}
+    adapters = [
+        {"name": line.split(":", 2)[-1].strip(), "driver_version": None, "dedicated_memory_bytes": None}
+        for line in output.splitlines()
+        if "VGA compatible controller" in line or "3D controller" in line
+    ]
+    return {"available": bool(adapters), "adapters": adapters, "source": "lspci"}
+
+
+def has_nvidia_adapter(display_adapters: Dict[str, Any]) -> Optional[bool]:
+    """``True``/``False`` when adapters were enumerated, ``None`` when unknown.
+
+    ``None`` matters: "we could not tell" must never be reported as "you have
+    no GPU".
+    """
+    if not display_adapters.get("available"):
+        return None
+    adapters = display_adapters.get("adapters") or []
+    if not adapters:
+        return None
+    return any(NVIDIA_ADAPTER_PATTERN.search(adapter.get("name") or "") for adapter in adapters)
+
+
 def query_nvcc() -> Dict[str, Any]:
     """CUDA toolkit version from ``nvcc``. Absent on runtime-only images."""
     output = _run(["nvcc", "--version"])
@@ -210,6 +296,7 @@ def collect_environment(requested_device: str = "auto") -> Dict[str, Any]:
             "source": "torch",
         },
         "devices": _device_records(),
+        "display_adapters": detect_display_adapters(),
         "nvidia_smi": query_nvidia_smi(),
         "nvcc": query_nvcc(),
         "requested_device": requested_device,
@@ -236,18 +323,39 @@ def environment_checks(
     results: List[CheckResult] = []
     driver_version = _merge_driver_version(environment)
 
+    adapters = environment.get("display_adapters", {"available": False, "adapters": []})
+    nvidia_present = has_nvidia_adapter(adapters)
+    results.append(_hardware_check(adapters, nvidia_present, torch_info, require_cuda))
+
     built_for_cuda = torch_info["cuda_version"] is not None
+    if built_for_cuda:
+        build_summary = "torch %s built for CUDA %s" % (
+            torch_info["version"],
+            torch_info["cuda_version"],
+        )
+    elif nvidia_present is False:
+        # Recommending a CUDA wheel here would send someone after a download
+        # that cannot possibly help.
+        build_summary = (
+            "torch %s is a CPU-only build, which is the correct build for this machine: "
+            "no NVIDIA adapter is present, so a CUDA wheel would not run either"
+            % torch_info["version"]
+        )
+    else:
+        build_summary = (
+            "torch %s is a CPU-only build (torch.version.cuda is None); reinstall a CUDA wheel"
+            % torch_info["version"]
+        )
     results.append(
         CheckResult(
             "torch.cuda_build",
             STATUS_PASS if built_for_cuda else (STATUS_FAIL if require_cuda else STATUS_WARN),
-            (
-                "torch %s built for CUDA %s" % (torch_info["version"], torch_info["cuda_version"])
-                if built_for_cuda
-                else "torch %s is a CPU-only build (torch.version.cuda is None); "
-                "reinstall a CUDA wheel" % torch_info["version"]
-            ),
-            {"torch_version": torch_info["version"], "cuda_version": torch_info["cuda_version"]},
+            build_summary,
+            {
+                "torch_version": torch_info["version"],
+                "cuda_version": torch_info["cuda_version"],
+                "nvidia_adapter_present": nvidia_present,
+            },
         )
     )
 
@@ -381,6 +489,56 @@ def environment_checks(
     return results
 
 
+def _hardware_check(
+    adapters: Dict[str, Any],
+    nvidia_present: Optional[bool],
+    torch_info: Dict[str, Any],
+    require_cuda: bool,
+) -> CheckResult:
+    """Is CUDA even possible on this machine, regardless of software?
+
+    This runs before the PyTorch-build check so the report answers "can this
+    box ever run CUDA?" before it answers "is it configured to?".
+    """
+    names = [adapter.get("name") for adapter in adapters.get("adapters") or []]
+    details = {
+        "adapters": adapters.get("adapters"),
+        "source": adapters.get("source"),
+        "nvidia_adapter_present": nvidia_present,
+    }
+    if torch_info["cuda_available"]:
+        return CheckResult(
+            "hardware.cuda_capable_gpu",
+            STATUS_PASS,
+            "CUDA is initialised, so a capable device is present",
+            details,
+        )
+    if nvidia_present is None:
+        return CheckResult(
+            "hardware.cuda_capable_gpu",
+            STATUS_WARN,
+            "could not enumerate display adapters (%s), so 'no CUDA' cannot be attributed to "
+            "hardware or to software here" % adapters.get("reason", "unknown reason"),
+            details,
+        )
+    if nvidia_present:
+        return CheckResult(
+            "hardware.cuda_capable_gpu",
+            STATUS_PASS,
+            "NVIDIA adapter present (%s) but CUDA is not initialised; the fault is in the "
+            "driver or the PyTorch build, not the hardware" % ", ".join(names),
+            details,
+        )
+    return CheckResult(
+        "hardware.cuda_capable_gpu",
+        STATUS_FAIL if require_cuda else STATUS_WARN,
+        "no NVIDIA adapter on this machine (found: %s). CUDA cannot be enabled by any driver "
+        "or PyTorch build -- this run needs a different machine, a cloud GPU, or CPU-only mode"
+        % (", ".join(names) or "none"),
+        details,
+    )
+
+
 def _driver_runtime_check(environment: Dict[str, Any]) -> CheckResult:
     """Is the installed driver new enough for the CUDA runtime torch was built against?"""
     runtime = environment["torch"]["cuda_version"]
@@ -425,7 +583,10 @@ def _driver_runtime_check(environment: Dict[str, Any]) -> CheckResult:
 
 __all__ = [
     "RELEVANT_ENV_VARS",
+    "NVIDIA_ADAPTER_PATTERN",
     "collect_environment",
+    "detect_display_adapters",
+    "has_nvidia_adapter",
     "environment_checks",
     "parse_version",
     "query_nvcc",

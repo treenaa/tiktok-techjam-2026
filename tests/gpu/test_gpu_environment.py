@@ -27,7 +27,15 @@ def test_collect_environment_reports_what_is_installed_without_assuming():
     assert environment["torch"]["cuda_version"] == torch.version.cuda
     assert environment["torch"]["cuda_available"] == torch.cuda.is_available()
     assert environment["resolved_device"] == "cpu"
-    assert set(environment) >= {"python", "platform", "devices", "nvidia_smi", "nvcc", "env"}
+    assert set(environment) >= {
+        "python",
+        "platform",
+        "devices",
+        "display_adapters",
+        "nvidia_smi",
+        "nvcc",
+        "env",
+    }
 
 
 def test_probe_helpers_degrade_gracefully_when_the_tool_is_absent():
@@ -89,6 +97,11 @@ def _fake_environment(**overrides):
             "gpus": [],
         },
         "nvcc": {"available": True, "version": "12.1"},
+        "display_adapters": {
+            "available": True,
+            "adapters": [{"name": "NVIDIA A10G", "driver_version": "535.104.05"}],
+            "source": "lspci",
+        },
         "requested_device": "auto",
         "resolved_device": "cuda",
         "device_resolution_error": None,
@@ -158,3 +171,97 @@ def test_environment_checks_do_not_mutate_the_caller_beyond_the_driver_field():
     before.pop("driver")
     environment.pop("driver")
     assert environment == before
+
+
+def test_display_adapters_are_enumerated_on_this_machine():
+    from src.gpu.environment import detect_display_adapters, has_nvidia_adapter
+
+    adapters = detect_display_adapters()
+    assert isinstance(adapters["available"], bool)
+    if adapters["available"]:
+        assert adapters["adapters"]
+        assert all(adapter["name"] for adapter in adapters["adapters"])
+        assert has_nvidia_adapter(adapters) in (True, False)
+    else:
+        # Unknown must stay unknown; it must never be reported as "no GPU".
+        assert adapters["reason"]
+        assert has_nvidia_adapter(adapters) is None
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("NVIDIA GeForce RTX 4090", True),
+        ("Tesla T4", True),
+        ("Quadro P1000", True),
+        ("Intel(R) Iris(R) Xe Graphics", False),
+        ("AMD Radeon RX 6800", False),
+        ("Microsoft Basic Display Adapter", False),
+    ],
+)
+def test_nvidia_adapters_are_recognised_by_name(name, expected):
+    from src.gpu.environment import has_nvidia_adapter
+
+    adapters = {"available": True, "adapters": [{"name": name}]}
+    assert has_nvidia_adapter(adapters) is expected
+
+
+def _no_cuda_environment(**adapters):
+    return _fake_environment(
+        torch={"cuda_version": None, "cuda_available": False, "device_count": 0},
+        devices=[],
+        resolved_device="cpu",
+        display_adapters=adapters,
+    )
+
+
+def test_integrated_graphics_is_diagnosed_as_hardware_not_a_bad_wheel():
+    """The dead end this check exists to prevent: no NVIDIA card at all."""
+    config = config_from_mapping({"require_cuda": True})
+    environment = _no_cuda_environment(
+        available=True,
+        adapters=[{"name": "Intel(R) Iris(R) Xe Graphics", "driver_version": "30.0.101.1109"}],
+        source="Win32_VideoController",
+    )
+    results = environment_checks(environment, config)
+    assert _status(results, "hardware.cuda_capable_gpu") == STATUS_FAIL
+
+    hardware = next(r for r in results if r.name == "hardware.cuda_capable_gpu")
+    assert "no NVIDIA adapter" in hardware.summary
+    assert "Iris" in hardware.summary
+
+    # And the build check must NOT send anyone after a CUDA wheel.
+    build = next(r for r in results if r.name == "torch.cuda_build")
+    assert "reinstall a CUDA wheel" not in build.summary
+    assert "correct build for this machine" in build.summary
+
+
+def test_an_nvidia_card_without_cuda_is_blamed_on_software():
+    config = config_from_mapping({"require_cuda": True})
+    environment = _no_cuda_environment(
+        available=True,
+        adapters=[{"name": "NVIDIA GeForce RTX 3070 Laptop GPU", "driver_version": "537.13"}],
+        source="Win32_VideoController",
+    )
+    results = environment_checks(environment, config)
+    assert _status(results, "hardware.cuda_capable_gpu") == STATUS_PASS
+    hardware = next(r for r in results if r.name == "hardware.cuda_capable_gpu")
+    assert "driver or the PyTorch build, not the hardware" in hardware.summary
+    # Here the CUDA-wheel advice is correct and must still appear.
+    build = next(r for r in results if r.name == "torch.cuda_build")
+    assert "reinstall a CUDA wheel" in build.summary
+
+
+def test_unknown_adapters_warn_rather_than_asserting_no_gpu():
+    config = config_from_mapping({"require_cuda": True})
+    environment = _no_cuda_environment(available=False, adapters=[], reason="lspci not found")
+    results = environment_checks(environment, config)
+    assert _status(results, "hardware.cuda_capable_gpu") == STATUS_WARN
+    hardware = next(r for r in results if r.name == "hardware.cuda_capable_gpu")
+    assert "cannot be attributed" in hardware.summary
+
+
+def test_a_working_cuda_device_passes_the_hardware_check_regardless_of_adapters():
+    config = config_from_mapping({"require_cuda": True})
+    results = environment_checks(_fake_environment(), config)
+    assert _status(results, "hardware.cuda_capable_gpu") == STATUS_PASS
