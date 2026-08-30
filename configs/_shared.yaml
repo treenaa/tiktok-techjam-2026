@@ -13,8 +13,8 @@ data:
   stratify_keys: [label]
   datasets:
     - {name: cifake,   adapter: cifake,   root: /data/cifake}
-    - {name: wildfake, adapter: wildfake, root: /data/wildfake, generator_depth: 0}
-    - {name: sid_set,  adapter: sid_set,  root: /data/SID_Set}
+    - {name: wildfake, adapter: wildfake, root: data/wildfake, generator_depth: 0}
+    - {name: sid_set,  adapter: sid_set,  root: data/SID_set}
   demo:
     - {name: coco_val2017,   adapter: folder, root: /data/coco/val2017,   fixed_label: 0}
     - {name: dalle_advanced, adapter: folder, root: /data/dalle_advanced, fixed_label: 1}
