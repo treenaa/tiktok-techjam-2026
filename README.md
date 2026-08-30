@@ -19,14 +19,75 @@ exactly once in inference.
 ## Status
 
 The data, model, training, evaluation, inference, and demo code paths are
-implemented and covered by download-free tests. This repository does not ship a
-trained checkpoint or claim benchmark numbers yet. Results must come from real
-experiments; they must not be inferred from synthetic fixtures or fabricated.
+implemented and covered by download-free tests.
+
+Three phase-one baselines have been trained and evaluated on real data. Every
+number below comes from a real run recorded under `results/`; none is inferred
+from synthetic fixtures.
+
+What has **not** been run yet, and is therefore not claimed anywhere:
+
+- CLIP and I-JEPA baselines (`configs/baseline_clip.yaml`,
+  `configs/baseline_ijepa.yaml` exist but have no results).
+- Robustness-aware training. All three baselines use `augment: none`,
+  `consistency_weight: 0.0`, and `forensic_branch: false`. The paired
+  augmentation, consistency loss, and forensic branch are implemented but do
+  not contribute to any published number.
+- A combined multi-dataset model, and cross-dataset (train on A, test on B)
+  generalisation.
+
+## Results
+
+Phase-one baseline: DINOv2 ViT-B/14 (`facebook/dinov2-base`), frozen backbone
+plus a linear head. 86,582,785 parameters, within the 2B competition limit.
+Each model was trained and tested on a single dataset with a source-grouped
+70/15/15 split, seed 42, threshold selected on validation.
+
+| Test set | n | Clean AUROC | Mean transformed AUROC | Mean AUROC drop | Worst transform | Worst AUROC | Mean class-flip rate |
+|---|---|---|---|---|---|---|---|
+| CIFAKE | 18,000 | 0.9867 | 0.9565 | 0.0302 | `resize_0.25` | 0.8209 | 0.144 |
+| SID_Set | 900 | 0.9353 | 0.9346 | 0.0007 | `jpeg_30` | 0.9322 | 0.019 |
+| WildFake | 600 | 0.9904 | 0.9831 | 0.0073 | `noise_0.10` | 0.9527 | 0.031 |
+
+Read these with the following caveats:
+
+- The SID_Set and WildFake test sets are small (900 and 600 images). Their
+  robustness looks excellent, but the support is too thin to headline.
+- CIFAKE is 32x32 imagery upscaled to 224. Aggressive blur and downscaling
+  destroy its signal: at `resize_0.25` accuracy falls to 0.561 and recall to
+  0.138 while specificity stays at 0.984, i.e. the model stops calling anything
+  AI-generated rather than making balanced mistakes. This is the failure mode
+  robustness-aware training is meant to address, and it has not been run yet.
+- Generator metadata is only populated for the WildFake run, so cross-generator
+  slices are empty in the other two reports.
+
+Full per-transform metrics, stability, subgroup slices, representative errors,
+and runtime are in `results/<run>/report.json` and `results/<run>/robustness.csv`.
+
+## Pretrained checkpoints
+
+Checkpoints are not stored in git. Download `best.pt` for the baseline you want
+from the repository's GitHub Releases page and place it under `runs/`:
+
+```bash
+mkdir -p runs/baseline_dino_real
+curl -L -o runs/baseline_dino_real/best.pt   https://github.com/treenaa/tiktok-techjam-2026/releases/download/v0.1-baselines/baseline_dino_real-best.pt
+```
+
+Each file is roughly 346 MB and contains the model, optimizer, scheduler, and
+scaler state plus the validation-selected threshold, so `predict.py` and
+`evaluate.py` can reconstruct the model without extra flags. Available
+checkpoints are `baseline_dino_real` (CIFAKE), `baseline_dino_sidset`, and
+`baseline_dino_wildfake_v3`; their validation-selected thresholds are 0.4668,
+0.4878, and 0.3832 respectively.
 
 ## Approach
 
-The project tests three pretrained visual representations under the same split,
-head, training schedule, seed, and robustness benchmark:
+The project is designed to test three pretrained visual representations under
+the same split, head, training schedule, seed, and robustness benchmark. Only
+DINOv2 has been run so far; see Status.
+
+Candidate backbones:
 
 - I-JEPA
 - DINOv2
@@ -238,5 +299,12 @@ tests/              download-free unit and integration coverage
 - Trina: losses, training loop, validation, checkpoints, early stopping
 - Jamie: robustness evaluation, metrics, drift, errors, runtime
 - Ryan: inference CLI, checkpoint reconstruction, demo, repository UX
+
+## License
+
+Source code is released under the MIT License; see [`LICENSE`](LICENSE). The
+licence covers this repository's code only. Pretrained weights and datasets
+(CIFAKE, WildFake, SID_Set, COCO val2017, DALL-E Advanced) remain under their
+own terms and must be checked before redistribution.
 
 See `SUBMISSION_CHECKLIST.md` before publishing or recording the demo.

@@ -11,7 +11,7 @@ recording are intentionally not marked complete by code generation.
 - [x] Explicit corrupt-file behavior with separate error reporting
 - [x] CPU fallback and download-free tests
 - [x] Setup, training, evaluation, inference, limitations, and contribution docs
-- [ ] Choose and add the team's repository license
+- [x] Choose and add the team's repository license (MIT, code only)
 - [ ] Create the public GitHub repository and verify it from a clean clone
 - [ ] Pin a tested lockfile or exact environment after the final training run
 - [ ] Confirm every redistributed dataset/model asset permits publication
@@ -26,21 +26,24 @@ recording are intentionally not marked complete by code generation.
 - [x] Continuous probabilities used for AUROC
 - [x] Deterministic official evaluation transformations
 - [ ] Run and publish the dataset shortcut audit on the real training manifest
-- [ ] Verify real SID_Set/CIFAKE/WildFake layouts against their adapters
-- [ ] Train CLIP, DINOv2, and I-JEPA under comparable configurations
+- [x] Verify real SID_Set/CIFAKE/WildFake layouts against their adapters
+- [ ] Train CLIP, DINOv2, and I-JEPA under comparable configurations (only DINOv2 done)
+- [ ] Train at least one robustness-aware run (paired augmentation + consistency + forensic branch); all published baselines are frozen linear probes with `augment: none`
+- [ ] Train a combined multi-dataset model and measure cross-dataset generalisation
+- [ ] Populate generator metadata for the CIFAKE and SID_Set runs so cross-generator slices are non-empty
 - [ ] Select the backbone using validation evidence, not test performance
 - [ ] Run the final test benchmark once with the selected checkpoint
 
 ## Results and error analysis
 
-- [ ] Populate clean plus all-transformation metrics from actual runs
-- [ ] Report mean/worst transformed AUROC and degradation
+- [x] Populate clean plus all-transformation metrics from actual runs (three DINOv2 baselines)
+- [x] Report mean/worst transformed AUROC and degradation
 - [ ] Report mean/median/p95 score drift and class-flip rate
 - [ ] Report cross-dataset and cross-generator slices with support counts
 - [ ] Review representative false positives and false negatives manually
 - [ ] Measure parameter count, checkpoint size, latency, and throughput on the demo device
 - [ ] Add one compact robustness/ablation table or figure to the submission
-- [ ] Do not include synthetic-fixture metrics or fabricated numbers
+- [x] Do not include synthetic-fixture metrics or fabricated numbers
 
 ## Product and judging demo
 
@@ -48,6 +51,7 @@ recording are intentionally not marked complete by code generation.
 - [x] Interactive upload demo and robustness panel implemented
 - [x] Demo warns that stability is not correctness
 - [ ] Place the final `best.pt` where the demo/inference commands expect it
+- [ ] Publish the baseline `best.pt` files as GitHub Release assets and confirm the README download command works from a clean clone
 - [x] Test JPG, JPEG, PNG, WebP, corrupt input, empty directory, and nested directory UX
 - [ ] Rehearse the demo offline with pretrained weights already cached
 - [ ] Record the end-to-end demo video
