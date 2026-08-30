@@ -1,0 +1,5 @@
+# GPU readiness and benchmark output. These are run artefacts tied to one
+# machine; commit a report deliberately (git add -f) when it is worth keeping
+# as evidence, rather than by default.
+*
+!.gitignore

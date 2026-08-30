@@ -1,0 +1,70 @@
+# GPU readiness profile for the team's actual card: one local GPU, 8 GB VRAM.
+#
+#   python scripts/gpu_check.py     --config configs/gpu_check_8gb.yaml
+#   python scripts/benchmark_gpu.py --config configs/gpu_check_8gb.yaml
+#
+# The sweep deliberately walks batch sizes past what 8 GB holds. Configurations
+# that do not fit are reported with measured fallbacks (largest batch that did
+# fit, the matching gradient-accumulation factor, whether AMP helped) rather
+# than an assumption that a larger GPU is available.
+#
+# 8 GB is tight for I-JEPA ViT-H/14 (~630M parameters). Expect that backbone to
+# be the first to overflow, and read the fallback block before deciding which
+# backbone the comparison can actually afford.
+
+device: auto
+require_cuda: true
+allow_cpu: false
+seed: 42
+deterministic: false
+
+model:
+  backbones: [ijepa, dinov2, clip]
+  architectures: [visual, fusion]
+  backbone_source: pretrained
+  local_files_only: false
+  # Phase-1 linear probe. This is also the single biggest memory saving
+  # available: a frozen encoder runs under no_grad and stores no activations.
+  freeze_backbone: true
+  image_size: 224
+  head_hidden_dim: 256
+
+smoke:
+  batch_size: 4
+  steps: 2
+  paired: true
+  amp: true
+  amp_dtype: float16
+
+benchmark:
+  # Deliberately spans the 8 GB ceiling so the report can state where it is
+  # instead of guessing. Rows above the ceiling come back as OOM findings.
+  batch_sizes: [4, 8, 16, 32]
+  warmup_steps: 3
+  measure_steps: 10
+  precisions: [fp32, amp]
+  modes: [train, inference]
+  amp_dtype: float16
+
+determinism:
+  enabled: true
+  batch_size: 4
+  logit_tolerance: 1.0e-5
+  loss_tolerance: 1.0e-5
+
+budget:
+  parameter_limit: 2000000000
+  # The card the team actually has. Configurations are judged against this even
+  # when measured elsewhere, so nothing silently assumes a bigger GPU.
+  vram_budget_mb: 8172
+  # Leave ~15% for allocator fragmentation, the CUDA context, and anything else
+  # sharing the display adapter.
+  vram_headroom_fraction: 0.85
+  # The effective batch training wants; gradient-accumulation fallbacks are
+  # sized to preserve it when the physical batch has to shrink.
+  target_train_batch_size: 32
+  min_train_images_per_second: null
+  min_inference_images_per_second: null
+  max_time_to_first_batch_seconds: 120.0
+  max_total_seconds: 1200.0
+  amp_logit_tolerance: 0.05

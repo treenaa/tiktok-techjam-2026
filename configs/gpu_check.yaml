@@ -1,0 +1,61 @@
+# GPU readiness profile for the rented training instance.
+#
+#   python scripts/gpu_check.py     --config configs/gpu_check.yaml
+#   python scripts/benchmark_gpu.py --config configs/gpu_check.yaml
+#
+# Nothing here names a GPU model, driver or CUDA version: the checks detect
+# what is actually installed and compare it against the requirements below.
+# For the team's own 8 GB card use configs/gpu_check_8gb.yaml, which pins the
+# VRAM budget and sweeps past its ceiling. For a dry run with no GPU and no
+# downloads, use configs/gpu_check_smoke.yaml.
+
+device: auto          # 'auto' | 'cuda' | 'cuda:0' | 'cpu'
+require_cuda: true    # a CPU-only torch build or an invisible GPU fails the run
+allow_cpu: false      # never silently benchmark the host and call it a GPU report
+seed: 42
+deterministic: false  # true also asks for deterministic cuDNN/cuBLAS kernels
+
+model:
+  backbones: [ijepa, dinov2, clip]
+  architectures: [visual, fusion]
+  # 'pretrained' restores the checkpoints registered in src/models/specs.py.
+  # The first run downloads them; set local_files_only: true once cached.
+  backbone_source: pretrained
+  local_files_only: false
+  freeze_backbone: true    # phase-1 linear probe, matching configs/_shared.yaml
+  image_size: 224
+  head_hidden_dim: 256
+
+smoke:
+  batch_size: 4
+  steps: 2
+  paired: true             # exercise the clean/augmented consistency path
+  amp: true
+  amp_dtype: float16       # 'bfloat16' on Ampere and later avoids GradScaler entirely
+
+benchmark:
+  batch_sizes: [8, 16, 32]
+  warmup_steps: 3
+  measure_steps: 10
+  precisions: [fp32, amp]
+  modes: [train, inference]
+  amp_dtype: float16
+
+determinism:
+  enabled: true
+  batch_size: 4
+  logit_tolerance: 1.0e-5
+  loss_tolerance: 1.0e-5
+
+budget:
+  parameter_limit: 2000000000   # competition ceiling; reported per backbone
+  # null = judge against whatever this device reports. Set it (in MiB) to plan
+  # for a specific card -- see configs/gpu_check_8gb.yaml.
+  vram_budget_mb: null
+  vram_headroom_fraction: 0.9   # warn once a config reserves more than 90% of VRAM
+  target_train_batch_size: 32   # preserved by gradient accumulation in fallbacks
+  min_train_images_per_second: null       # set once a real baseline exists
+  min_inference_images_per_second: null
+  max_time_to_first_batch_seconds: 120.0
+  max_total_seconds: 900.0      # this suite must stay minutes, not hours
+  amp_logit_tolerance: 0.05

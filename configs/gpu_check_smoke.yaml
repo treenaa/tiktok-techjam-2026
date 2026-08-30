@@ -1,0 +1,59 @@
+# Fast, download-free GPU-check profile.
+#
+#   python scripts/gpu_check.py --config configs/gpu_check_smoke.yaml --allow-cpu
+#
+# Uses the stand-in backbone from src/gpu/builders.py, so it runs in seconds on
+# any machine and needs no pretrained weights and no dataset. It validates the
+# plumbing -- device placement, AMP, seeding, the report -- and deliberately
+# does NOT produce meaningful throughput or VRAM numbers for the real
+# backbones. Use configs/gpu_check.yaml on the training instance for those.
+
+device: auto
+require_cuda: false
+allow_cpu: true
+seed: 42
+deterministic: false
+
+model:
+  backbones: [ijepa, dinov2, clip]
+  architectures: [visual, fusion]
+  backbone_source: stub
+  freeze_backbone: true
+  image_size: 64
+  head_hidden_dim: 64
+  stub:
+    hidden_size: 64
+    layers: 2
+    heads: 4
+    patch_size: 16
+
+smoke:
+  batch_size: 4
+  steps: 2
+  paired: true
+  amp: true
+  amp_dtype: float16
+
+benchmark:
+  batch_sizes: [8]
+  warmup_steps: 1
+  measure_steps: 4
+  precisions: [fp32]
+  modes: [train, inference]
+
+determinism:
+  enabled: true
+  batch_size: 4
+  logit_tolerance: 1.0e-5
+  loss_tolerance: 1.0e-5
+
+budget:
+  parameter_limit: 2000000000
+  vram_budget_mb: null
+  vram_headroom_fraction: 0.9
+  target_train_batch_size: 8
+  min_train_images_per_second: null
+  min_inference_images_per_second: null
+  max_time_to_first_batch_seconds: 60.0
+  max_total_seconds: 300.0
+  amp_logit_tolerance: 0.05
