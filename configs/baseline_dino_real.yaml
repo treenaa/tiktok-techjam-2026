@@ -1,0 +1,49 @@
+# DINOv2 ViT-B/14 linear probe
+# Phase-1 baseline. Everything below `model:` is copied verbatim from
+# configs/_shared.yaml -- only `model:` may differ between baselines.
+# Verify with:  python -m src.data.audit_cli compare configs/baseline_*.yaml
+name: baseline_dino
+
+seed: 42
+
+data:
+  seed: 42
+  ratios: {train: 0.70, val: 0.15, test: 0.15}
+  group_keys: [source_id]
+  stratify_keys: [label]
+  datasets:
+    - {name: cifake,   adapter: cifake,   root: /content/tiktok-techjam/data/cifake}
+  # - {name: wildfake, adapter: wildfake, root: /data/wildfake, generator_depth: 0}
+  # - {name: sid_set, adapter: sid_set, root: /data/SID_Set}
+  demo: []
+  # - {name: coco_val2017,   adapter: folder,   root: /data/coco/val2017,   fixed_label: 0}
+  # - {name: dalle_advanced, adapter: folder,   root: /data/dalle_advanced, fixed_label: 1}
+
+training:
+  epochs: 10
+  batch_size: 32
+  optimizer: adamw
+  lr: 0.0003
+  weight_decay: 0.01
+  loss: bce_with_logits
+  freeze_backbone: true
+  augment: none
+  consistency_weight: 0.0
+  early_stopping:
+    monitor: val_auroc
+    patience: 3
+  num_workers: 2
+
+evaluation:
+  metrics: [auroc, accuracy, f1, precision, recall, specificity, fpr]
+  transforms: all
+  primary_metric: val_auroc
+  threshold_source: val
+
+model:
+  backbone: dinov2_vitb14
+  pretrained: facebook/dinov2-base
+  normalization: imagenet
+  image_size: 224
+  head: linear
+  forensic_branch: false
