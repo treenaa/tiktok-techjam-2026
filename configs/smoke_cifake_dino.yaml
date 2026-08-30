@@ -1,0 +1,42 @@
+# One-epoch real-data integration run. This is a pipeline smoke test, not a
+# publishable benchmark: CIFAKE images are only 32x32 and cover one generator.
+name: smoke_cifake_dino
+
+seed: 42
+
+data:
+  seed: 42
+  ratios: {train: 0.70, val: 0.15, test: 0.15}
+  group_keys: [source_id]
+  stratify_keys: [label]
+  datasets:
+    - {name: cifake, adapter: cifake, root: data/cifake}
+
+training:
+  epochs: 1
+  batch_size: 32
+  optimizer: adamw
+  lr: 0.0003
+  weight_decay: 0.01
+  loss: bce_with_logits
+  freeze_backbone: true
+  augment: none
+  consistency_weight: 0.0
+  early_stopping:
+    monitor: val_auroc
+    patience: 1
+  num_workers: 0
+
+evaluation:
+  metrics: [auroc, accuracy, f1, precision, recall, specificity, fpr]
+  transforms: all
+  primary_metric: val_auroc
+  threshold_source: val
+
+model:
+  backbone: dinov2_vitb14
+  pretrained: facebook/dinov2-base
+  normalization: imagenet
+  image_size: 224
+  head: linear
+  forensic_branch: false

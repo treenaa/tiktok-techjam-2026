@@ -114,6 +114,22 @@ def test_verify_json_lists_reasons(tmp_path, capsys):
     assert payload["unreadable"][0]["reason"]
 
 
+def test_verify_manifest_applies_root_once(tmp_path, capsys):
+    root = tmp_path / "images"
+    image_path = root / "real" / "sample.png"
+    write_image(str(image_path), 1)
+    manifest = tmp_path / "manifest.csv"
+    write_manifest(
+        [ManifestRecord("real/sample.png", 0, "sample")],
+        str(manifest),
+    )
+
+    assert main(
+        ["verify", "--manifest", str(manifest), "--root", str(root)]
+    ) == OK
+    assert "1/1 images readable" in capsys.readouterr().out
+
+
 def test_verify_requires_input():
     assert main(["verify"]) == USAGE
 

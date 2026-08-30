@@ -7,3 +7,10 @@ venv/
 # raw datasets and generated manifests (anchored: must not match src/data/)
 /data/
 /manifests/
+# local experiment artifacts; publish selected results deliberately
+/runs/
+/results/
+/checkpoints/
+/predictions*.json
+/robustness.json
+/colab_bundle.zip

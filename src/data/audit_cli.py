@@ -153,7 +153,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if args.input:
         paths = list_images(args.input, recursive=not args.flat)
     elif args.manifest:
-        paths = [r.resolve_path(args.root) for r in read_manifest(args.manifest, root=args.root)]
+        # read_manifest already prefixes relative paths when root is supplied.
+        # Resolving a second time produces e.g. root/root/image.jpg.
+        paths = [r.image_path for r in read_manifest(args.manifest, root=args.root)]
     else:
         print("error: pass --input or --manifest", file=sys.stderr)
         return _USAGE
