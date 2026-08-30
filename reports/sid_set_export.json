@@ -1,0 +1,20 @@
+{
+  "counts": {
+    "duplicate_ids": 0,
+    "full_synthetic": 1713,
+    "images": 5181,
+    "masks": 1740,
+    "real": 1728,
+    "skipped": 0,
+    "tampered": 1740
+  },
+  "masks_dir": "C:\\NTU\\hackathon\\TikTok TechJam 2026\\data\\SID_set_masks",
+  "out": "C:\\NTU\\hackathon\\TikTok TechJam 2026\\data\\SID_set",
+  "repo_id": "saberzl/SID_Set",
+  "shard_limit_per_split": 3,
+  "shards": 6,
+  "splits": [
+    "train",
+    "validation"
+  ]
+}

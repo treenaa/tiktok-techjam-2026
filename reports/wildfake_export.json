@@ -1,0 +1,28 @@
+{
+  "approx_download_gb": 9.049999999999999,
+  "archives": 5,
+  "counts": {
+    "already_present": 0,
+    "fake": 65713,
+    "images": 294434,
+    "non_image": 0,
+    "real": 228721,
+    "unlabelled": 0
+  },
+  "generators": {
+    "DDIM": 65713,
+    "afhq": 31933,
+    "celebahq": 30000,
+    "ffhq": 70000,
+    "imagenet": 96788
+  },
+  "groups": [
+    "real_afhq",
+    "real_celebahq",
+    "real_ffhq",
+    "real_imagenet",
+    "DDIM"
+  ],
+  "out": "C:\\NTU\\hackathon\\TikTok TechJam 2026\\data\\wildfake",
+  "source": "modelscope:hy2628982280/WildFake"
+}
