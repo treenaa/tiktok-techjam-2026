@@ -11,8 +11,15 @@ from typing import Any, Dict, Optional
 
 import streamlit as st
 
-from src.data import load_image
-from src.inference import InferenceError, Predictor, load_artifact
+# `streamlit run app/streamlit_app.py` puts app/ on sys.path, not the repository
+# root, so `src.*` is otherwise unimportable and the app fails to start. Same
+# bootstrap predict.py uses.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from src.data import load_image  # noqa: E402
+from src.inference import InferenceError, Predictor, load_artifact  # noqa: E402
 
 
 DIAGNOSTIC_TRANSFORMS = (
