@@ -138,7 +138,7 @@ curl -L -o runs/baseline_dino_real/best.pt \
   https://github.com/treenaa/tiktok-techjam-2026/releases/download/v0.1-baselines/baseline_dino_real-best.pt
 ```
 
-Each file is roughly 346 MB and contains the model, optimizer, scheduler, and
+Each file is roughly 350 MB and contains the model, optimizer, scheduler, and
 scaler state plus the validation-selected threshold, so `predict.py` and
 `evaluate.py` can reconstruct the model without extra flags.
 
@@ -147,13 +147,7 @@ scaler state plus the validation-selected threshold, so `predict.py` and
 | `baseline_dino_real` | CIFAKE | 0.4668375 | yes |
 | `baseline_dino_sidset` | SID_Set | 0.4877687 | yes |
 | `baseline_dino_wildfake_v3` | WildFake | 0.3831851 | yes |
-| `robust_dino_fusion` | CIFAKE | 0.6042040 | **not yet** |
-
-> **`robust_dino_fusion` weights are not yet published.** Its evaluation
-> artifacts are committed under `results/robust_dino_fusion/`, but the
-> checkpoint has not been uploaded to a Release, so the run is currently
-> reproducible from `configs/robust_dino_fusion.yaml` rather than downloadable.
-> Its SHA-256 will be listed here once the asset is uploaded.
+| `robust_dino_fusion` | CIFAKE | 0.6042042 | yes |
 
 Verify a download against the checksums below. Use `sha256sum` on Linux, or
 `shasum -a 256` on macOS:
@@ -162,6 +156,7 @@ Verify a download against the checksums below. Use `sha256sum` on Linux, or
 bd2e27126805c474213cfca17a24479c6141426f1c156b80efa2ca9357f22a04  baseline_dino_real-best.pt
 87c244f35b5b9ad2a79b1e08d98a512f48ead87e14125bc668b9e0713edc1e6b  baseline_dino_sidset-best.pt
 215819264f3f83f0e666b4af5901ed63acb613eda96a07bd5d1060bd7d2c9f08  baseline_dino_wildfake_v3-best.pt
+1fced519c8ecd6dc25b456c0ac872afa452b013a653b795cd24a8c483f39a20c  robust_dino_fusion-best.pt
 ```
 
 ## Approach

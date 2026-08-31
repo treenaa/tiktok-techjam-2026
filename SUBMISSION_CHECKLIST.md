@@ -55,7 +55,7 @@ recording are intentionally not marked complete by code generation.
 - [x] Demo warns that stability is not correctness
 - [ ] Place the final `best.pt` where the demo/inference commands expect it
 - [x] Publish the baseline `best.pt` files as GitHub Release assets and confirm the README download command works from a clean clone — verified for `baseline_dino_wildfake_v3`: downloaded from the v0.1-baselines release into a fresh clone, SHA-256 matched, and `load_artifact` reconstructed the model with no factory overrides
-- [ ] Publish `robust_dino_fusion-best.pt` as a Release asset and add its SHA-256 to the README; the run's results are committed but its weights are not downloadable
+- [x] Publish `robust_dino_fusion-best.pt` as a Release asset and add its SHA-256 to the README — uploaded to v0.1-baselines (347,819,408 bytes, `state=uploaded`); download URL returns 200 and the first 1 MB fetched back from GitHub hashes identically to the local checkpoint
 - [x] Test JPG, JPEG, PNG, WebP, corrupt input, empty directory, and nested directory UX
 - [ ] Rehearse the demo offline with pretrained weights already cached
 - [ ] Record the end-to-end demo video
