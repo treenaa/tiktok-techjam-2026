@@ -191,6 +191,56 @@ def test_jpeg_export_is_offered_as_an_alternative():
     assert "photo__clean.jpg" in zipfile.ZipFile(io.BytesIO(data)).namelist()
 
 
+def test_verdict_line_compares_like_with_like_near_the_threshold(tmp_path, monkeypatch):
+    """A score just under the threshold must not read as a contradiction.
+
+    The score was rendered as a percentage ("60.4%") next to a raw-probability
+    threshold ("0.6042"), at different precisions. A correct `real` verdict then
+    looked like a bug to anyone reading the two numbers together.
+    """
+    import app.studio as studio
+
+    captured = []
+    monkeypatch.setattr(studio.st, "markdown", lambda body, **kw: captured.append(str(body)))
+    monkeypatch.setattr(studio.st, "columns", lambda *a, **k: (_Sink(captured), _Sink(captured)))
+
+    studio._verdict(
+        {
+            "probability_aigc": 0.6040,
+            "threshold": 0.6042041778564453,
+            "threshold_source": "validation",
+            "scores": {"clean": 0.6040},
+            "mean_absolute_drift": 0.0,
+            "max_absolute_drift": 0.0,
+            "class_stable": True,
+            "stability_note": "note",
+        }
+    )
+    body = "".join(captured)
+    assert "60.40%" in body and "60.42%" in body, "both sides must be shown in the same unit"
+    assert "<" in body, "the comparison operator should make the verdict self-evident"
+    assert "0.6042<" not in body and "threshold 0.6042 " not in body
+
+
+class _Sink:
+    """Minimal stand-in for a Streamlit column that records markdown."""
+
+    def __init__(self, sink):
+        self._sink = sink
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def markdown(self, body, **kwargs):
+        self._sink.append(str(body))
+
+    def columns(self, *args, **kwargs):
+        return (_Sink(self._sink), _Sink(self._sink))
+
+
 def test_chaining_returns_a_single_image_not_a_set():
     """The chain mode's whole point: many transforms, one file out."""
     import app.studio as studio
