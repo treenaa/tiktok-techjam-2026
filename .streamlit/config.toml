@@ -1,0 +1,18 @@
+# Base theme for the Spectral Evidence demo (app/studio.py).
+# Streamlit's own chrome -- widgets, sidebar, tab bar -- is themed here so it
+# sits on the same ground as the injected styles in app/theme.py. Colours are
+# the tokens from that module; keep the two in step.
+
+[theme]
+base = "dark"
+primaryColor = "#C03A5B"
+backgroundColor = "#0A0F1A"
+secondaryBackgroundColor = "#141C2B"
+textColor = "#E8EDF5"
+font = "sans serif"
+
+[server]
+maxUploadSize = 25
+
+[browser]
+gatherUsageStats = false
