@@ -160,9 +160,28 @@ def test_compare_detects_drift(tmp_path, capsys):
     assert "NOT COMPARABLE" in output and "training.lr" in output
 
 
-def test_compare_accepts_globs(capsys):
+def test_compare_accepts_globs(tmp_path, capsys):
     pytest.importorskip("yaml")
-    assert main(["compare", "configs/baseline_*.yaml"]) == OK
+    import yaml
+
+    # Glob over a fixture directory rather than `configs/`: the shipped configs
+    # legitimately include dataset-specific and intervention runs that are not
+    # mutually comparable, and this test is about pattern expansion, not about
+    # which shipped runs happen to share a fingerprint. The comparability of the
+    # backbone-comparison set is asserted by
+    # `test_shipped_baselines_compare_cleanly`.
+    with open("configs/baseline_dino.yaml") as fh:
+        raw = yaml.safe_load(fh)
+
+    for name, backbone in (("globbed_a", "dinov2_vitb14"), ("globbed_b", "clip_vitb16")):
+        cfg = dict(raw, name=name)
+        cfg["model"] = dict(raw["model"], backbone=backbone)
+        with open(tmp_path / ("%s.yaml" % name), "w") as fh:
+            yaml.safe_dump(cfg, fh)
+
+    assert main(["compare", str(tmp_path / "globbed_*.yaml")]) == OK
+    output = capsys.readouterr().out
+    assert "comparing 2 runs" in output and "COMPARABLE" in output
 
 
 def test_compare_needs_two_configs():
