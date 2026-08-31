@@ -589,6 +589,69 @@ def _decode(uploaded) -> Any:
 
 
 # --------------------------------------------------------------------------
+def _detector_tab(artifact, depth: str, show_distance: bool) -> None:
+    """The Detector tab.
+
+    A function rather than inline in `main()` so its early returns exit only
+    this tab. Written inline, a `return` here aborted `main()` and the
+    Transform lab and Published results tabs rendered empty.
+    """
+    uploaded = st.file_uploader(
+        "Upload an image",
+        type=UPLOAD_TYPES,
+        label_visibility="collapsed",
+        help="Accepted: %s" % unsupported_note(),
+    )
+    if uploaded is None:
+        st.markdown(
+            '<p class="sx-sub">Drop in an image to score it and watch its frequency '
+            "signature survive — or fail to survive — the official transformation suite.</p>",
+            unsafe_allow_html=True,
+        )
+        _onboarding_preview()
+        return
+
+    views = _ordered_views(depth == "All twenty")
+    try:
+        image = _decode(uploaded)
+        predictor = Predictor(artifact, batch_size=max(len(views), 1))
+        result = predictor.diagnose_image(image, [v["name"] for v in views])
+    except Exception as exc:
+        st.error("Could not analyze this image: %s" % exc)
+        return
+
+    _verdict(result)
+
+    st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
+    st.markdown(
+        '<h2 class="sx-h">The degradation ladder</h2>'
+        '<p class="sx-sub">Each card pairs the transformed image with the log-FFT magnitude '
+        "the forensic branch consumes. Blur empties the outer field; noise floods it; JPEG "
+        "prints its block grid into it. A red border marks a view whose verdict flipped.</p>",
+        unsafe_allow_html=True,
+    )
+    _ladder(image, result, views, show_distance)
+
+    st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
+    st.markdown(
+        '<h2 class="sx-h">Score under degradation</h2>'
+        '<p class="sx-sub">One line, twenty ways of reposting the same picture.</p>',
+        unsafe_allow_html=True,
+    )
+    _drift_chart(result, views)
+
+    st.markdown(
+        """
+<div class="sx-foot" style="margin-top:2rem">
+<b>Stability is not correctness.</b> A verdict that survives every transform can still be the
+wrong verdict. This prototype may fail on unseen generators, edited or composite images,
+screenshots, and domains unlike its training data.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     args = _arguments()
     st.set_page_config(
@@ -639,60 +702,7 @@ def main() -> None:
     detector, lab, evidence = st.tabs(["Detector", "Transform lab", "Published results"])
 
     with detector:
-        uploaded = st.file_uploader(
-            "Upload an image",
-            type=UPLOAD_TYPES,
-            label_visibility="collapsed",
-            help="Accepted: %s" % unsupported_note(),
-        )
-        if uploaded is None:
-            st.markdown(
-                '<p class="sx-sub">Drop in an image to score it and watch its frequency '
-                "signature survive — or fail to survive — the official transformation suite.</p>",
-                unsafe_allow_html=True,
-            )
-            _onboarding_preview()
-            return
-
-        views = _ordered_views(depth == "All twenty")
-        try:
-            image = _decode(uploaded)
-            predictor = Predictor(artifact, batch_size=max(len(views), 1))
-            result = predictor.diagnose_image(image, [v["name"] for v in views])
-        except Exception as exc:
-            st.error("Could not analyze this image: %s" % exc)
-            return
-
-        _verdict(result)
-
-        st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
-        st.markdown(
-            '<h2 class="sx-h">The degradation ladder</h2>'
-            '<p class="sx-sub">Each card pairs the transformed image with the log-FFT magnitude '
-            "the forensic branch consumes. Blur empties the outer field; noise floods it; JPEG "
-            "prints its block grid into it. A red border marks a view whose verdict flipped.</p>",
-            unsafe_allow_html=True,
-        )
-        _ladder(image, result, views, show_distance)
-
-        st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
-        st.markdown(
-            '<h2 class="sx-h">Score under degradation</h2>'
-            '<p class="sx-sub">One line, twenty ways of reposting the same picture.</p>',
-            unsafe_allow_html=True,
-        )
-        _drift_chart(result, views)
-
-        st.markdown(
-            """
-<div class="sx-foot" style="margin-top:2rem">
-<b>Stability is not correctness.</b> A verdict that survives every transform can still be the
-wrong verdict. This prototype may fail on unseen generators, edited or composite images,
-screenshots, and domains unlike its training data.
-</div>
-""",
-            unsafe_allow_html=True,
-        )
+        _detector_tab(artifact, depth, show_distance)
 
     with lab:
         _transform_lab()

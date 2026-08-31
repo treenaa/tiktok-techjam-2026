@@ -191,6 +191,27 @@ def test_jpeg_export_is_offered_as_an_alternative():
     assert "photo__clean.jpg" in zipfile.ZipFile(io.BytesIO(data)).namelist()
 
 
+def test_every_tab_renders_before_anything_is_uploaded(tmp_path):
+    """Regression: early returns in the Detector tab used to abort main().
+
+    The Detector body was inline in `main()`, so `return` when no image was
+    uploaded skipped the `with lab:` and `with evidence:` blocks entirely and
+    both of those tabs rendered empty.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(STUDIO, default_timeout=120)
+    app.run()
+    app.text_input[0].set_value(_tiny_checkpoint(tmp_path)).run()
+
+    assert not app.exception
+    body = "".join(str(m.value) for m in app.markdown)
+    assert "Transform lab" in body, "lab tab did not render with no image uploaded"
+    assert "Published results" in body, "results tab did not render with no image uploaded"
+    # The lab has its own uploader, so both must be present.
+    assert len(app.file_uploader) == 2
+
+
 def test_lab_is_reachable_without_a_checkpoint():
     from streamlit.testing.v1 import AppTest
 
