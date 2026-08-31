@@ -145,7 +145,7 @@ def _verdict(result: Dict[str, Any]) -> None:
   <div class="sx-prob">%.1f<span style="font-size:.45em;color:%s">%%</span></div>
   <div class="sx-label" style="color:%s">%s</div>
   <div class="sx-bar"><i style="width:%.2f%%"></i><span class="sx-thresh" style="left:%.2f%%"></span></div>
-  <p class="sx-note">white marker = decision threshold %.4f (%s)</p>
+  <p class="sx-note">%.2f%% %s %.2f%% — the decision threshold (%s), marked in white.</p>
 </div>
 """
             % (
@@ -155,7 +155,13 @@ def _verdict(result: Dict[str, Any]) -> None:
                 "AI-generated" if is_aigc else "Authentic",
                 probability * 100,
                 threshold * 100,
-                threshold,
+                # Both sides in the same unit and precision. Showing the score as a
+                # percentage next to a raw-probability threshold made a correct
+                # verdict look wrong whenever the two were within rounding distance
+                # of each other -- e.g. "60.4%" against "0.6042", classified real.
+                probability * 100,
+                "≥" if is_aigc else "<",
+                threshold * 100,
                 result["threshold_source"],
             ),
             unsafe_allow_html=True,
