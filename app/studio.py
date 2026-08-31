@@ -23,11 +23,13 @@ import json
 import os
 import sys
 import tempfile
+import zipfile
 from typing import Any, Dict, List, Optional, Sequence
 
 import altair as alt
 import pandas as pd
 import streamlit as st
+from PIL import Image
 
 # `streamlit run app/studio.py` puts app/ on sys.path, not the repository root,
 # so `app.*` and `src.*` are otherwise unimportable. Same bootstrap predict.py uses.
@@ -39,6 +41,7 @@ from app.formats import UPLOAD_TYPES, unsupported_note  # noqa: E402
 from app.spectral import ambient, pair_strip, spectral_distance  # noqa: E402
 from app.theme import ACCENT, ACCENT_WARM, INK, MUTED, RULE, STABLE, css  # noqa: E402
 from src.data import describe_eval_transforms, get_eval_transform, load_image  # noqa: E402
+from src.data.transforms import Compose  # noqa: E402
 from src.inference import InferenceError, Predictor, load_artifact  # noqa: E402
 
 #: Family order for the ladder: identity first, then increasing structural damage.
@@ -298,6 +301,258 @@ def _drift_chart(result: Dict[str, Any], views: Sequence[Dict[str, Any]]) -> Non
     )
 
 
+def _square_preview(image, size: int = 220):
+    """Small square preview so every card in the lab grid is the same shape."""
+    width, height = image.size
+    edge = min(width, height)
+    left, top = (width - edge) // 2, (height - edge) // 2
+    return image.crop((left, top, left + edge, top + edge)).resize(
+        (size, size), Image.Resampling.LANCZOS
+    )
+
+
+def _transform_bundle(
+    image,
+    views: Sequence[Dict[str, Any]],
+    stem: str,
+    fmt: str = "PNG",
+    quality: int = 95,
+) -> bytes:
+    """Zip the transformed copies of ``image``, plus a manifest describing them.
+
+    PNG is the default because it is lossless: a view like ``jpeg_30`` has
+    already had JPEG artifacts baked into its pixels by the transform, and
+    re-encoding the result as JPEG on the way out would compress it a second
+    time and change what a detector sees.
+    """
+    rgb = image.convert("RGB")
+    extension = "png" if fmt.upper() == "PNG" else "jpg"
+    buffer = io.BytesIO()
+    manifest: List[Dict[str, Any]] = []
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for view in views:
+            name = view["name"]
+            transformed = get_eval_transform(name)(rgb)
+            payload = io.BytesIO()
+            if extension == "png":
+                transformed.save(payload, format="PNG", optimize=True)
+            else:
+                transformed.save(payload, format="JPEG", quality=quality, subsampling=0)
+            filename = "%s__%s.%s" % (stem, name, extension)
+            archive.writestr(filename, payload.getvalue())
+            manifest.append(
+                {
+                    "file": filename,
+                    "transform": name,
+                    "family": view.get("family"),
+                    "params": dict(view.get("params") or {}),
+                    "size": list(transformed.size),
+                }
+            )
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "source": stem,
+                    "export_format": extension,
+                    "transform_source": "src.data.get_eval_transform",
+                    "note": (
+                        "Deterministic official competition transforms. Noise views are "
+                        "seeded, so regenerating this bundle reproduces identical pixels."
+                    ),
+                    "views": manifest,
+                },
+                indent=2,
+            ),
+        )
+    return buffer.getvalue()
+
+
+def _chained(image, names: Sequence[str]):
+    """Apply ``names`` one after another to a single image.
+
+    A *redistribution chain*, not the benchmark protocol. The official suite
+    scores each corruption independently; stacking them models what actually
+    happens to a picture reposted through several platforms, and is strictly
+    harsher than any single view.
+    """
+    composed = Compose([get_eval_transform(name) for name in names])
+    return composed(image.convert("RGB"))
+
+
+def _encode(image, fmt: str, quality: int = 95) -> bytes:
+    payload = io.BytesIO()
+    if fmt.upper() == "PNG":
+        image.save(payload, format="PNG", optimize=True)
+    else:
+        image.save(payload, format="JPEG", quality=quality, subsampling=0)
+    return payload.getvalue()
+
+
+def _chain_section(image, views: Sequence[Dict[str, Any]], stem: str, fmt: str) -> None:
+    """One image with every selected transform applied in sequence."""
+    names = [view["name"] for view in views]
+    chained = _chained(image, names)
+    extension = "png" if fmt.upper() == "PNG" else "jpg"
+    data = _encode(chained, fmt)
+    filename = "%s__chained.%s" % (stem, extension)
+
+    st.download_button(
+        "Download 1 image with %d transforms applied (.%s)" % (len(names), extension),
+        data=data,
+        file_name=filename,
+        mime="image/png" if extension == "png" else "image/jpeg",
+        width="stretch",
+    )
+    st.markdown(
+        '<p class="sx-note">%s · %.0f KB · applied in this order: %s</p>'
+        % (filename, len(data) / 1024, " → ".join(names)),
+        unsafe_allow_html=True,
+    )
+
+    before, after = st.columns(2, gap="medium")
+    before.markdown(
+        '<div class="sx-card"><div class="sx-cap"><span class="sx-name">original</span></div>'
+        '%s<div class="sx-meta">as uploaded</div></div>'
+        % _img_tag(_square_preview(image.convert("RGB"))),
+        unsafe_allow_html=True,
+    )
+    after.markdown(
+        '<div class="sx-card clean"><div class="sx-cap"><span class="sx-name">chained</span></div>'
+        '%s<div class="sx-meta">%d transforms stacked</div></div>'
+        % (_img_tag(_square_preview(chained)), len(names)),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<p class="sx-note" style="margin-top:1rem"><b>This is not the benchmark protocol.</b> '
+        "The competition scores each corruption independently — that is what the "
+        '"separate files" option produces, and what every published number in this '
+        "repository is measured on. Stacking corruptions models a photo reposted through "
+        "several platforms and is far harsher than any single view, so a low score here is "
+        "expected and is not comparable to the published results.</p>",
+        unsafe_allow_html=True,
+    )
+
+
+def _transform_lab() -> None:
+    """Generate and export the official transformed copies of an image.
+
+    Deliberately independent of the detector: producing the corrupted set is
+    useful whether or not a checkpoint is loaded, and it needs no model.
+    """
+    st.markdown(
+        '<h2 class="sx-h">Transform lab</h2>'
+        '<p class="sx-sub">Apply the official competition transformations to an image and '
+        "download the results, so the corrupted copies can be fed back through "
+        "<code>predict.py</code> or re-uploaded to the Detector tab. Uses the same "
+        "deterministic transforms the benchmark uses — no model required.</p>",
+        unsafe_allow_html=True,
+    )
+
+    uploaded = st.file_uploader(
+        "Image to transform",
+        type=UPLOAD_TYPES,
+        key="lab_upload",
+        label_visibility="collapsed",
+        help="Accepted: %s" % unsupported_note(),
+    )
+    if uploaded is None:
+        st.markdown(
+            '<p class="sx-note">Drop in an image to generate its transformed set.</p>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    try:
+        image = _decode(uploaded)
+    except Exception as exc:
+        st.error("Could not read that image: %s" % exc)
+        return
+
+    described = {item["name"]: item for item in describe_eval_transforms()}
+    all_names = [view["name"] for view in _ordered_views(True)]
+
+    left, right = st.columns([3, 1], gap="large")
+    with left:
+        chosen = st.multiselect(
+            "Transforms",
+            options=all_names,
+            default=[name for name in all_names if name != "clean"],
+            label_visibility="collapsed",
+        )
+    with right:
+        fmt = st.radio("Format", ("PNG", "JPEG"), index=0, horizontal=True)
+
+    mode = st.radio(
+        "Output",
+        (
+            "Separate files — one per transform (benchmark protocol)",
+            "One image — all selected transforms stacked (redistribution chain)",
+        ),
+        index=0,
+        help=(
+            "The competition measures each corruption independently, so the benchmark "
+            "protocol writes one file per transform. Stacking them into a single image "
+            "models a photo reposted through several platforms and is much harsher."
+        ),
+    )
+
+    if not chosen:
+        st.markdown(
+            '<p class="sx-note">Select at least one transform.</p>', unsafe_allow_html=True
+        )
+        return
+
+    views = [described[name] for name in all_names if name in chosen]
+    stem = os.path.splitext(uploaded.name)[0] or "image"
+
+    if mode.startswith("One image"):
+        _chain_section(image, views, stem, fmt)
+        return
+
+    bundle = _transform_bundle(image, views, stem, fmt=fmt)
+
+    st.download_button(
+        "Download %d transformed image%s (.zip)" % (len(views), "" if len(views) == 1 else "s"),
+        data=bundle,
+        file_name="%s_transformed.zip" % stem,
+        mime="application/zip",
+        width="stretch",
+    )
+    st.markdown(
+        '<p class="sx-note">%s · %.0f KB · includes <code>manifest.json</code> recording each '
+        "transform and its parameters. PNG export is lossless, so a view that already carries "
+        "JPEG artifacts is not compressed a second time on the way out.</p>"
+        % (fmt, len(bundle) / 1024),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
+    st.markdown('<p class="sx-eyebrow">Preview</p>', unsafe_allow_html=True)
+
+    rgb = image.convert("RGB")
+    per_row = 4
+    for start in range(0, len(views), per_row):
+        row = views[start : start + per_row]
+        for cell, view in zip(st.columns(len(row), gap="small"), row):
+            name = view["name"]
+            cell.markdown(
+                '<div class="sx-card">'
+                '  <div class="sx-cap"><span class="sx-name">%s</span></div>'
+                "  %s"
+                '  <div class="sx-meta">%s</div>'
+                "</div>"
+                % (
+                    name,
+                    _img_tag(_square_preview(get_eval_transform(name)(rgb))),
+                    _describe_params(view),
+                ),
+                unsafe_allow_html=True,
+            )
+
+
 def _evidence() -> None:
     reports = sorted(glob.glob(os.path.join(RESULTS_DIR, "*", "report.json")))
     if not reports:
@@ -421,6 +676,69 @@ def _decode(uploaded) -> Any:
 
 
 # --------------------------------------------------------------------------
+def _detector_tab(artifact, depth: str, show_distance: bool) -> None:
+    """The Detector tab.
+
+    A function rather than inline in `main()` so its early returns exit only
+    this tab. Written inline, a `return` here aborted `main()` and the
+    Transform lab and Published results tabs rendered empty.
+    """
+    uploaded = st.file_uploader(
+        "Upload an image",
+        type=UPLOAD_TYPES,
+        label_visibility="collapsed",
+        help="Accepted: %s" % unsupported_note(),
+    )
+    if uploaded is None:
+        st.markdown(
+            '<p class="sx-sub">Drop in an image to score it and watch its frequency '
+            "signature survive — or fail to survive — the official transformation suite.</p>",
+            unsafe_allow_html=True,
+        )
+        _onboarding_preview()
+        return
+
+    views = _ordered_views(depth == "All twenty")
+    try:
+        image = _decode(uploaded)
+        predictor = Predictor(artifact, batch_size=max(len(views), 1))
+        result = predictor.diagnose_image(image, [v["name"] for v in views])
+    except Exception as exc:
+        st.error("Could not analyze this image: %s" % exc)
+        return
+
+    _verdict(result)
+
+    st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
+    st.markdown(
+        '<h2 class="sx-h">The degradation ladder</h2>'
+        '<p class="sx-sub">Each card pairs the transformed image with the log-FFT magnitude '
+        "the forensic branch consumes. Blur empties the outer field; noise floods it; JPEG "
+        "prints its block grid into it. A red border marks a view whose verdict flipped.</p>",
+        unsafe_allow_html=True,
+    )
+    _ladder(image, result, views, show_distance)
+
+    st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
+    st.markdown(
+        '<h2 class="sx-h">Score under degradation</h2>'
+        '<p class="sx-sub">One line, twenty ways of reposting the same picture.</p>',
+        unsafe_allow_html=True,
+    )
+    _drift_chart(result, views)
+
+    st.markdown(
+        """
+<div class="sx-foot" style="margin-top:2rem">
+<b>Stability is not correctness.</b> A verdict that survives every transform can still be the
+wrong verdict. This prototype may fail on unseen generators, edited or composite images,
+screenshots, and domains unlike its training data.
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
     args = _arguments()
     st.set_page_config(
@@ -461,67 +779,20 @@ def main() -> None:
     if artifact is None:
         _onboarding()
         st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
+        # The lab needs no model, so it stays usable with no checkpoint loaded.
+        _transform_lab()
+        st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
         st.markdown('<h2 class="sx-h">Published results</h2>', unsafe_allow_html=True)
         _evidence()
         return
 
-    detector, evidence = st.tabs(["Detector", "Published results"])
+    detector, lab, evidence = st.tabs(["Detector", "Transform lab", "Published results"])
 
     with detector:
-        uploaded = st.file_uploader(
-            "Upload an image",
-            type=UPLOAD_TYPES,
-            label_visibility="collapsed",
-            help="Accepted: %s" % unsupported_note(),
-        )
-        if uploaded is None:
-            st.markdown(
-                '<p class="sx-sub">Drop in an image to score it and watch its frequency '
-                "signature survive — or fail to survive — the official transformation suite.</p>",
-                unsafe_allow_html=True,
-            )
-            _onboarding_preview()
-            return
+        _detector_tab(artifact, depth, show_distance)
 
-        views = _ordered_views(depth == "All twenty")
-        try:
-            image = _decode(uploaded)
-            predictor = Predictor(artifact, batch_size=max(len(views), 1))
-            result = predictor.diagnose_image(image, [v["name"] for v in views])
-        except Exception as exc:
-            st.error("Could not analyze this image: %s" % exc)
-            return
-
-        _verdict(result)
-
-        st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
-        st.markdown(
-            '<h2 class="sx-h">The degradation ladder</h2>'
-            '<p class="sx-sub">Each card pairs the transformed image with the log-FFT magnitude '
-            "the forensic branch consumes. Blur empties the outer field; noise floods it; JPEG "
-            "prints its block grid into it. A red border marks a view whose verdict flipped.</p>",
-            unsafe_allow_html=True,
-        )
-        _ladder(image, result, views, show_distance)
-
-        st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
-        st.markdown(
-            '<h2 class="sx-h">Score under degradation</h2>'
-            '<p class="sx-sub">One line, twenty ways of reposting the same picture.</p>',
-            unsafe_allow_html=True,
-        )
-        _drift_chart(result, views)
-
-        st.markdown(
-            """
-<div class="sx-foot" style="margin-top:2rem">
-<b>Stability is not correctness.</b> A verdict that survives every transform can still be the
-wrong verdict. This prototype may fail on unseen generators, edited or composite images,
-screenshots, and domains unlike its training data.
-</div>
-""",
-            unsafe_allow_html=True,
-        )
+    with lab:
+        _transform_lab()
 
     with evidence:
         st.markdown(

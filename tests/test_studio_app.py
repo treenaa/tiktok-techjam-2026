@@ -112,6 +112,155 @@ def test_heic_decodes_when_available(tmp_path):
     assert decoded.mode == "RGB" and decoded.size == (96, 96)
 
 
+# -- transform lab ---------------------------------------------------------
+def _bundle(image, names=None, fmt="PNG"):
+    import app.studio as studio
+
+    views = studio._ordered_views(True)
+    if names is not None:
+        views = [v for v in views if v["name"] in names]
+    return studio._transform_bundle(image, views, "photo", fmt=fmt), views
+
+
+def test_bundle_contains_one_file_per_transform_plus_a_manifest():
+    import io
+    import zipfile
+
+    data, views = _bundle(_textured(128))
+    archive = zipfile.ZipFile(io.BytesIO(data))
+    assert "manifest.json" in archive.namelist()
+    images = [n for n in archive.namelist() if n != "manifest.json"]
+    assert len(images) == len(views) == 20
+
+
+def test_manifest_records_the_official_parameters():
+    import io
+    import json
+    import zipfile
+
+    data, _ = _bundle(_textured(128))
+    manifest = json.loads(zipfile.ZipFile(io.BytesIO(data)).read("manifest.json"))
+    assert manifest["transform_source"] == "src.data.get_eval_transform"
+    by_name = {v["transform"]: v for v in manifest["views"]}
+    assert by_name["jpeg_30"]["params"]["quality"] == 30
+    assert by_name["blur_2.0"]["params"]["sigma"] == 2.0
+    assert by_name["resize_0.25"]["params"]["scale"] == 0.25
+    assert by_name["noise_0.10"]["params"]["sigma"] == 0.1
+    assert by_name["crop_0.80"]["params"]["ratio"] == 0.8
+
+
+def test_exported_pixels_match_the_official_transform_exactly():
+    """A PNG export must not re-compress a view that already carries artifacts."""
+    import io
+    import zipfile
+
+    import numpy as np
+
+    from src.data import get_eval_transform
+
+    base = _textured(128)
+    data, _ = _bundle(base, names={"jpeg_30", "blur_2.0"})
+    archive = zipfile.ZipFile(io.BytesIO(data))
+    for name in ("jpeg_30", "blur_2.0"):
+        exported = Image.open(io.BytesIO(archive.read("photo__%s.png" % name))).convert("RGB")
+        direct = get_eval_transform(name)(base.convert("RGB"))
+        assert np.array_equal(np.asarray(exported), np.asarray(direct))
+
+
+def test_bundle_is_reproducible_pixel_for_pixel():
+    """Seeded noise means the same image must always export the same bytes."""
+    import io
+    import zipfile
+
+    import numpy as np
+
+    base = _textured(128)
+    first = zipfile.ZipFile(io.BytesIO(_bundle(base)[0]))
+    second = zipfile.ZipFile(io.BytesIO(_bundle(base)[0]))
+    for name in [n for n in first.namelist() if n.endswith(".png")]:
+        a = np.asarray(Image.open(io.BytesIO(first.read(name))))
+        b = np.asarray(Image.open(io.BytesIO(second.read(name))))
+        assert np.array_equal(a, b), name
+
+
+def test_jpeg_export_is_offered_as_an_alternative():
+    import io
+    import zipfile
+
+    data, _ = _bundle(_textured(128), names={"clean"}, fmt="JPEG")
+    assert "photo__clean.jpg" in zipfile.ZipFile(io.BytesIO(data)).namelist()
+
+
+def test_chaining_returns_a_single_image_not_a_set():
+    """The chain mode's whole point: many transforms, one file out."""
+    import app.studio as studio
+
+    base = _textured(128)
+    out = studio._chained(base, ["jpeg_30", "blur_2.0", "resize_0.25"])
+    assert isinstance(out, Image.Image)
+    assert out.mode == "RGB"
+    assert out.size == base.size
+
+
+def test_chaining_is_order_dependent_and_harsher_than_one_transform():
+    import numpy as np
+
+    import app.studio as studio
+    from src.data import get_eval_transform
+
+    base = _textured(160)
+    single = get_eval_transform("blur_2.0")(base.convert("RGB"))
+    chained = studio._chained(base, ["jpeg_30", "blur_2.0", "noise_0.10"])
+    assert not np.array_equal(np.asarray(single), np.asarray(chained))
+
+    # Order matters, so the composition is genuinely sequential.
+    forward = studio._chained(base, ["blur_2.0", "noise_0.10"])
+    reverse = studio._chained(base, ["noise_0.10", "blur_2.0"])
+    assert not np.array_equal(np.asarray(forward), np.asarray(reverse))
+
+
+def test_chain_encodes_to_both_formats():
+    import io
+
+    import app.studio as studio
+
+    chained = studio._chained(_textured(96), ["jpeg_50", "crop_0.80"])
+    png = studio._encode(chained, "PNG")
+    jpg = studio._encode(chained, "JPEG")
+    assert Image.open(io.BytesIO(png)).format == "PNG"
+    assert Image.open(io.BytesIO(jpg)).format == "JPEG"
+
+
+def test_every_tab_renders_before_anything_is_uploaded(tmp_path):
+    """Regression: early returns in the Detector tab used to abort main().
+
+    The Detector body was inline in `main()`, so `return` when no image was
+    uploaded skipped the `with lab:` and `with evidence:` blocks entirely and
+    both of those tabs rendered empty.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(STUDIO, default_timeout=120)
+    app.run()
+    app.text_input[0].set_value(_tiny_checkpoint(tmp_path)).run()
+
+    assert not app.exception
+    body = "".join(str(m.value) for m in app.markdown)
+    assert "Transform lab" in body, "lab tab did not render with no image uploaded"
+    assert "Published results" in body, "results tab did not render with no image uploaded"
+    # The lab has its own uploader, so both must be present.
+    assert len(app.file_uploader) == 2
+
+
+def test_lab_is_reachable_without_a_checkpoint():
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(STUDIO, default_timeout=60)
+    app.run()
+    assert not app.exception
+    assert any("Transform lab" in str(m.value) for m in app.markdown)
+
+
 # -- theme -----------------------------------------------------------------
 def test_css_defines_every_token_the_markup_uses():
     block = css()
