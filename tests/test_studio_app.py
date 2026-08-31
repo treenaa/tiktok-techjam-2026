@@ -112,6 +112,94 @@ def test_heic_decodes_when_available(tmp_path):
     assert decoded.mode == "RGB" and decoded.size == (96, 96)
 
 
+# -- transform lab ---------------------------------------------------------
+def _bundle(image, names=None, fmt="PNG"):
+    import app.studio as studio
+
+    views = studio._ordered_views(True)
+    if names is not None:
+        views = [v for v in views if v["name"] in names]
+    return studio._transform_bundle(image, views, "photo", fmt=fmt), views
+
+
+def test_bundle_contains_one_file_per_transform_plus_a_manifest():
+    import io
+    import zipfile
+
+    data, views = _bundle(_textured(128))
+    archive = zipfile.ZipFile(io.BytesIO(data))
+    assert "manifest.json" in archive.namelist()
+    images = [n for n in archive.namelist() if n != "manifest.json"]
+    assert len(images) == len(views) == 20
+
+
+def test_manifest_records_the_official_parameters():
+    import io
+    import json
+    import zipfile
+
+    data, _ = _bundle(_textured(128))
+    manifest = json.loads(zipfile.ZipFile(io.BytesIO(data)).read("manifest.json"))
+    assert manifest["transform_source"] == "src.data.get_eval_transform"
+    by_name = {v["transform"]: v for v in manifest["views"]}
+    assert by_name["jpeg_30"]["params"]["quality"] == 30
+    assert by_name["blur_2.0"]["params"]["sigma"] == 2.0
+    assert by_name["resize_0.25"]["params"]["scale"] == 0.25
+    assert by_name["noise_0.10"]["params"]["sigma"] == 0.1
+    assert by_name["crop_0.80"]["params"]["ratio"] == 0.8
+
+
+def test_exported_pixels_match_the_official_transform_exactly():
+    """A PNG export must not re-compress a view that already carries artifacts."""
+    import io
+    import zipfile
+
+    import numpy as np
+
+    from src.data import get_eval_transform
+
+    base = _textured(128)
+    data, _ = _bundle(base, names={"jpeg_30", "blur_2.0"})
+    archive = zipfile.ZipFile(io.BytesIO(data))
+    for name in ("jpeg_30", "blur_2.0"):
+        exported = Image.open(io.BytesIO(archive.read("photo__%s.png" % name))).convert("RGB")
+        direct = get_eval_transform(name)(base.convert("RGB"))
+        assert np.array_equal(np.asarray(exported), np.asarray(direct))
+
+
+def test_bundle_is_reproducible_pixel_for_pixel():
+    """Seeded noise means the same image must always export the same bytes."""
+    import io
+    import zipfile
+
+    import numpy as np
+
+    base = _textured(128)
+    first = zipfile.ZipFile(io.BytesIO(_bundle(base)[0]))
+    second = zipfile.ZipFile(io.BytesIO(_bundle(base)[0]))
+    for name in [n for n in first.namelist() if n.endswith(".png")]:
+        a = np.asarray(Image.open(io.BytesIO(first.read(name))))
+        b = np.asarray(Image.open(io.BytesIO(second.read(name))))
+        assert np.array_equal(a, b), name
+
+
+def test_jpeg_export_is_offered_as_an_alternative():
+    import io
+    import zipfile
+
+    data, _ = _bundle(_textured(128), names={"clean"}, fmt="JPEG")
+    assert "photo__clean.jpg" in zipfile.ZipFile(io.BytesIO(data)).namelist()
+
+
+def test_lab_is_reachable_without_a_checkpoint():
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(STUDIO, default_timeout=60)
+    app.run()
+    assert not app.exception
+    assert any("Transform lab" in str(m.value) for m in app.markdown)
+
+
 # -- theme -----------------------------------------------------------------
 def test_css_defines_every_token_the_markup_uses():
     block = css()

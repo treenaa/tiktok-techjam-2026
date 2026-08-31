@@ -23,11 +23,13 @@ import json
 import os
 import sys
 import tempfile
+import zipfile
 from typing import Any, Dict, List, Optional, Sequence
 
 import altair as alt
 import pandas as pd
 import streamlit as st
+from PIL import Image
 
 # `streamlit run app/studio.py` puts app/ on sys.path, not the repository root,
 # so `app.*` and `src.*` are otherwise unimportable. Same bootstrap predict.py uses.
@@ -298,6 +300,172 @@ def _drift_chart(result: Dict[str, Any], views: Sequence[Dict[str, Any]]) -> Non
     )
 
 
+def _square_preview(image, size: int = 220):
+    """Small square preview so every card in the lab grid is the same shape."""
+    width, height = image.size
+    edge = min(width, height)
+    left, top = (width - edge) // 2, (height - edge) // 2
+    return image.crop((left, top, left + edge, top + edge)).resize(
+        (size, size), Image.Resampling.LANCZOS
+    )
+
+
+def _transform_bundle(
+    image,
+    views: Sequence[Dict[str, Any]],
+    stem: str,
+    fmt: str = "PNG",
+    quality: int = 95,
+) -> bytes:
+    """Zip the transformed copies of ``image``, plus a manifest describing them.
+
+    PNG is the default because it is lossless: a view like ``jpeg_30`` has
+    already had JPEG artifacts baked into its pixels by the transform, and
+    re-encoding the result as JPEG on the way out would compress it a second
+    time and change what a detector sees.
+    """
+    rgb = image.convert("RGB")
+    extension = "png" if fmt.upper() == "PNG" else "jpg"
+    buffer = io.BytesIO()
+    manifest: List[Dict[str, Any]] = []
+
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for view in views:
+            name = view["name"]
+            transformed = get_eval_transform(name)(rgb)
+            payload = io.BytesIO()
+            if extension == "png":
+                transformed.save(payload, format="PNG", optimize=True)
+            else:
+                transformed.save(payload, format="JPEG", quality=quality, subsampling=0)
+            filename = "%s__%s.%s" % (stem, name, extension)
+            archive.writestr(filename, payload.getvalue())
+            manifest.append(
+                {
+                    "file": filename,
+                    "transform": name,
+                    "family": view.get("family"),
+                    "params": dict(view.get("params") or {}),
+                    "size": list(transformed.size),
+                }
+            )
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                {
+                    "source": stem,
+                    "export_format": extension,
+                    "transform_source": "src.data.get_eval_transform",
+                    "note": (
+                        "Deterministic official competition transforms. Noise views are "
+                        "seeded, so regenerating this bundle reproduces identical pixels."
+                    ),
+                    "views": manifest,
+                },
+                indent=2,
+            ),
+        )
+    return buffer.getvalue()
+
+
+def _transform_lab() -> None:
+    """Generate and export the official transformed copies of an image.
+
+    Deliberately independent of the detector: producing the corrupted set is
+    useful whether or not a checkpoint is loaded, and it needs no model.
+    """
+    st.markdown(
+        '<h2 class="sx-h">Transform lab</h2>'
+        '<p class="sx-sub">Apply the official competition transformations to an image and '
+        "download the results, so the corrupted copies can be fed back through "
+        "<code>predict.py</code> or re-uploaded to the Detector tab. Uses the same "
+        "deterministic transforms the benchmark uses — no model required.</p>",
+        unsafe_allow_html=True,
+    )
+
+    uploaded = st.file_uploader(
+        "Image to transform",
+        type=UPLOAD_TYPES,
+        key="lab_upload",
+        label_visibility="collapsed",
+        help="Accepted: %s" % unsupported_note(),
+    )
+    if uploaded is None:
+        st.markdown(
+            '<p class="sx-note">Drop in an image to generate its transformed set.</p>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    try:
+        image = _decode(uploaded)
+    except Exception as exc:
+        st.error("Could not read that image: %s" % exc)
+        return
+
+    described = {item["name"]: item for item in describe_eval_transforms()}
+    all_names = [view["name"] for view in _ordered_views(True)]
+
+    left, right = st.columns([3, 1], gap="large")
+    with left:
+        chosen = st.multiselect(
+            "Transforms",
+            options=all_names,
+            default=[name for name in all_names if name != "clean"],
+            label_visibility="collapsed",
+        )
+    with right:
+        fmt = st.radio("Format", ("PNG", "JPEG"), index=0, horizontal=True)
+
+    if not chosen:
+        st.markdown(
+            '<p class="sx-note">Select at least one transform.</p>', unsafe_allow_html=True
+        )
+        return
+
+    views = [described[name] for name in all_names if name in chosen]
+    stem = os.path.splitext(uploaded.name)[0] or "image"
+    bundle = _transform_bundle(image, views, stem, fmt=fmt)
+
+    st.download_button(
+        "Download %d transformed image%s (.zip)" % (len(views), "" if len(views) == 1 else "s"),
+        data=bundle,
+        file_name="%s_transformed.zip" % stem,
+        mime="application/zip",
+        width="stretch",
+    )
+    st.markdown(
+        '<p class="sx-note">%s · %.0f KB · includes <code>manifest.json</code> recording each '
+        "transform and its parameters. PNG export is lossless, so a view that already carries "
+        "JPEG artifacts is not compressed a second time on the way out.</p>"
+        % (fmt, len(bundle) / 1024),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
+    st.markdown('<p class="sx-eyebrow">Preview</p>', unsafe_allow_html=True)
+
+    rgb = image.convert("RGB")
+    per_row = 4
+    for start in range(0, len(views), per_row):
+        row = views[start : start + per_row]
+        for cell, view in zip(st.columns(len(row), gap="small"), row):
+            name = view["name"]
+            cell.markdown(
+                '<div class="sx-card">'
+                '  <div class="sx-cap"><span class="sx-name">%s</span></div>'
+                "  %s"
+                '  <div class="sx-meta">%s</div>'
+                "</div>"
+                % (
+                    name,
+                    _img_tag(_square_preview(get_eval_transform(name)(rgb))),
+                    _describe_params(view),
+                ),
+                unsafe_allow_html=True,
+            )
+
+
 def _evidence() -> None:
     reports = sorted(glob.glob(os.path.join(RESULTS_DIR, "*", "report.json")))
     if not reports:
@@ -461,11 +629,14 @@ def main() -> None:
     if artifact is None:
         _onboarding()
         st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
+        # The lab needs no model, so it stays usable with no checkpoint loaded.
+        _transform_lab()
+        st.markdown('<hr class="sx-rule">', unsafe_allow_html=True)
         st.markdown('<h2 class="sx-h">Published results</h2>', unsafe_allow_html=True)
         _evidence()
         return
 
-    detector, evidence = st.tabs(["Detector", "Published results"])
+    detector, lab, evidence = st.tabs(["Detector", "Transform lab", "Published results"])
 
     with detector:
         uploaded = st.file_uploader(
@@ -522,6 +693,9 @@ screenshots, and domains unlike its training data.
 """,
             unsafe_allow_html=True,
         )
+
+    with lab:
+        _transform_lab()
 
     with evidence:
         st.markdown(
