@@ -191,6 +191,46 @@ def test_jpeg_export_is_offered_as_an_alternative():
     assert "photo__clean.jpg" in zipfile.ZipFile(io.BytesIO(data)).namelist()
 
 
+def test_chaining_returns_a_single_image_not_a_set():
+    """The chain mode's whole point: many transforms, one file out."""
+    import app.studio as studio
+
+    base = _textured(128)
+    out = studio._chained(base, ["jpeg_30", "blur_2.0", "resize_0.25"])
+    assert isinstance(out, Image.Image)
+    assert out.mode == "RGB"
+    assert out.size == base.size
+
+
+def test_chaining_is_order_dependent_and_harsher_than_one_transform():
+    import numpy as np
+
+    import app.studio as studio
+    from src.data import get_eval_transform
+
+    base = _textured(160)
+    single = get_eval_transform("blur_2.0")(base.convert("RGB"))
+    chained = studio._chained(base, ["jpeg_30", "blur_2.0", "noise_0.10"])
+    assert not np.array_equal(np.asarray(single), np.asarray(chained))
+
+    # Order matters, so the composition is genuinely sequential.
+    forward = studio._chained(base, ["blur_2.0", "noise_0.10"])
+    reverse = studio._chained(base, ["noise_0.10", "blur_2.0"])
+    assert not np.array_equal(np.asarray(forward), np.asarray(reverse))
+
+
+def test_chain_encodes_to_both_formats():
+    import io
+
+    import app.studio as studio
+
+    chained = studio._chained(_textured(96), ["jpeg_50", "crop_0.80"])
+    png = studio._encode(chained, "PNG")
+    jpg = studio._encode(chained, "JPEG")
+    assert Image.open(io.BytesIO(png)).format == "PNG"
+    assert Image.open(io.BytesIO(jpg)).format == "JPEG"
+
+
 def test_every_tab_renders_before_anything_is_uploaded(tmp_path):
     """Regression: early returns in the Detector tab used to abort main().
 

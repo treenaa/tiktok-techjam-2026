@@ -41,6 +41,7 @@ from app.formats import UPLOAD_TYPES, unsupported_note  # noqa: E402
 from app.spectral import ambient, pair_strip, spectral_distance  # noqa: E402
 from app.theme import ACCENT, ACCENT_WARM, INK, MUTED, RULE, STABLE, css  # noqa: E402
 from src.data import describe_eval_transforms, get_eval_transform, load_image  # noqa: E402
+from src.data.transforms import Compose  # noqa: E402
 from src.inference import InferenceError, Predictor, load_artifact  # noqa: E402
 
 #: Family order for the ladder: identity first, then increasing structural damage.
@@ -368,6 +369,73 @@ def _transform_bundle(
     return buffer.getvalue()
 
 
+def _chained(image, names: Sequence[str]):
+    """Apply ``names`` one after another to a single image.
+
+    A *redistribution chain*, not the benchmark protocol. The official suite
+    scores each corruption independently; stacking them models what actually
+    happens to a picture reposted through several platforms, and is strictly
+    harsher than any single view.
+    """
+    composed = Compose([get_eval_transform(name) for name in names])
+    return composed(image.convert("RGB"))
+
+
+def _encode(image, fmt: str, quality: int = 95) -> bytes:
+    payload = io.BytesIO()
+    if fmt.upper() == "PNG":
+        image.save(payload, format="PNG", optimize=True)
+    else:
+        image.save(payload, format="JPEG", quality=quality, subsampling=0)
+    return payload.getvalue()
+
+
+def _chain_section(image, views: Sequence[Dict[str, Any]], stem: str, fmt: str) -> None:
+    """One image with every selected transform applied in sequence."""
+    names = [view["name"] for view in views]
+    chained = _chained(image, names)
+    extension = "png" if fmt.upper() == "PNG" else "jpg"
+    data = _encode(chained, fmt)
+    filename = "%s__chained.%s" % (stem, extension)
+
+    st.download_button(
+        "Download 1 image with %d transforms applied (.%s)" % (len(names), extension),
+        data=data,
+        file_name=filename,
+        mime="image/png" if extension == "png" else "image/jpeg",
+        width="stretch",
+    )
+    st.markdown(
+        '<p class="sx-note">%s · %.0f KB · applied in this order: %s</p>'
+        % (filename, len(data) / 1024, " → ".join(names)),
+        unsafe_allow_html=True,
+    )
+
+    before, after = st.columns(2, gap="medium")
+    before.markdown(
+        '<div class="sx-card"><div class="sx-cap"><span class="sx-name">original</span></div>'
+        '%s<div class="sx-meta">as uploaded</div></div>'
+        % _img_tag(_square_preview(image.convert("RGB"))),
+        unsafe_allow_html=True,
+    )
+    after.markdown(
+        '<div class="sx-card clean"><div class="sx-cap"><span class="sx-name">chained</span></div>'
+        '%s<div class="sx-meta">%d transforms stacked</div></div>'
+        % (_img_tag(_square_preview(chained)), len(names)),
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        '<p class="sx-note" style="margin-top:1rem"><b>This is not the benchmark protocol.</b> '
+        "The competition scores each corruption independently — that is what the "
+        '"separate files" option produces, and what every published number in this '
+        "repository is measured on. Stacking corruptions models a photo reposted through "
+        "several platforms and is far harsher than any single view, so a low score here is "
+        "expected and is not comparable to the published results.</p>",
+        unsafe_allow_html=True,
+    )
+
+
 def _transform_lab() -> None:
     """Generate and export the official transformed copies of an image.
 
@@ -417,6 +485,20 @@ def _transform_lab() -> None:
     with right:
         fmt = st.radio("Format", ("PNG", "JPEG"), index=0, horizontal=True)
 
+    mode = st.radio(
+        "Output",
+        (
+            "Separate files — one per transform (benchmark protocol)",
+            "One image — all selected transforms stacked (redistribution chain)",
+        ),
+        index=0,
+        help=(
+            "The competition measures each corruption independently, so the benchmark "
+            "protocol writes one file per transform. Stacking them into a single image "
+            "models a photo reposted through several platforms and is much harsher."
+        ),
+    )
+
     if not chosen:
         st.markdown(
             '<p class="sx-note">Select at least one transform.</p>', unsafe_allow_html=True
@@ -425,6 +507,11 @@ def _transform_lab() -> None:
 
     views = [described[name] for name in all_names if name in chosen]
     stem = os.path.splitext(uploaded.name)[0] or "image"
+
+    if mode.startswith("One image"):
+        _chain_section(image, views, stem, fmt)
+        return
+
     bundle = _transform_bundle(image, views, stem, fmt=fmt)
 
     st.download_button(
