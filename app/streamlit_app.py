@@ -124,7 +124,7 @@ def main() -> None:
 
     left, right = st.columns((1, 1))
     with left:
-        st.image(image, caption=uploaded.name, use_column_width=True)
+        st.image(image, caption=uploaded.name, width="stretch")
     with right:
         st.metric("AI-generated probability", "%.1f%%" % (result["probability_aigc"] * 100))
         st.metric("Prediction", result["prediction"])
@@ -140,7 +140,7 @@ def main() -> None:
         {"View": name, "P(AI-generated)": score, "Percent": "%.1f%%" % (score * 100)}
         for name, score in result["scores"].items()
     ]
-    st.dataframe(rows, hide_index=True, use_container_width=True)
+    st.dataframe(rows, hide_index=True, width="stretch")
     st.warning(result["stability_note"])
     st.caption(
         "This prototype may fail on unseen generators, edited/composite images, screenshots, and domains unlike its training data."
