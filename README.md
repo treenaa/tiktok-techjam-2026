@@ -129,13 +129,17 @@ and runtime are in `results/<run>/report.json` and `results/<run>/robustness.csv
 
 ## Pretrained checkpoints
 
-Checkpoints are not stored in git. Download `best.pt` for the baseline you want
-from the repository's GitHub Releases page and place it under `runs/`:
+Checkpoints are not stored in git; they are published as assets on the
+[v0.1-baselines release](https://github.com/treenaa/tiktok-techjam-2026/releases/tag/v0.1-baselines).
+
+**Use `robust_dino_fusion` unless you specifically want a baseline.** It is the
+robustness-aware model reported above and the checkpoint every command in this
+README assumes. Download it into `runs/`:
 
 ```bash
-mkdir -p runs/baseline_dino_real
-curl -L -o runs/baseline_dino_real/best.pt \
-  https://github.com/treenaa/tiktok-techjam-2026/releases/download/v0.1-baselines/baseline_dino_real-best.pt
+mkdir -p runs/robust_dino_fusion
+curl -L -o runs/robust_dino_fusion/best.pt \
+  https://github.com/treenaa/tiktok-techjam-2026/releases/download/v0.1-baselines/robust_dino_fusion-best.pt
 ```
 
 Each file is roughly 350 MB and contains the model, optimizer, scheduler, and
@@ -283,13 +287,14 @@ python evaluate.py \
   --model-kwargs '{"backbone":"dinov2","architecture":"fusion"}' \
   --preprocess-factory src.models:create_preprocess \
   --preprocess-kwargs '{"backbone":"dinov2"}' \
-  --checkpoint runs/final/best.pt \
+  --checkpoint runs/robust_dino_fusion/best.pt \
   --threshold "$VALIDATION_THRESHOLD" \
   --output-dir results/final \
   --save-predictions
 ```
 
-Use the validation-selected threshold stored in the best checkpoint. The report
+The threshold is stored in the checkpoint and is printed by `predict.py`; for
+`robust_dino_fusion` it is `0.6042042`. Never select it on test data. The report
 contains AUROC, accuracy, F1, precision, recall, specificity, false-positive
 rate, AUROC degradation, score drift, class flips, dataset/generator slices,
 representative errors, and runtime measurements.
@@ -302,7 +307,7 @@ Training checkpoints are self-describing, so the usual command is:
 python predict.py \
   --input ./images \
   --output predictions.json \
-  --checkpoint runs/final/best.pt
+  --checkpoint runs/robust_dino_fusion/best.pt
 ```
 
 Files are sorted deterministically. Supported formats are JPG/JPEG, PNG, WebP,
@@ -313,7 +318,7 @@ To explicitly skip corrupt files and receive a separate error report:
 python predict.py \
   --input ./images \
   --output predictions.json \
-  --checkpoint runs/final/best.pt \
+  --checkpoint runs/robust_dino_fusion/best.pt \
   --on-error skip
 ```
 
@@ -323,7 +328,7 @@ Optional robustness diagnostics remain separate from competition JSON:
 python predict.py \
   --input ./images \
   --output predictions.json \
-  --checkpoint runs/final/best.pt \
+  --checkpoint runs/robust_dino_fusion/best.pt \
   --diagnostics-output robustness.json
 ```
 
@@ -333,11 +338,27 @@ State restoration remains strict.
 
 ## Interactive demo
 
+`app/studio.py` ("Spectral Evidence") is the judging demo. It shows each image
+beside the log-FFT magnitude the forensic branch actually consumes, and walks the
+official degradation ladder so robustness is watched rather than read off a table:
+
 ```bash
-streamlit run app/streamlit_app.py -- \
-  --checkpoint runs/final/best.pt \
+streamlit run app/studio.py -- \
+  --checkpoint runs/robust_dino_fusion/best.pt \
   --device auto
 ```
+
+`app/streamlit_app.py` is a smaller panel over the same inference path:
+
+```bash
+streamlit run app/streamlit_app.py -- \
+  --checkpoint runs/robust_dino_fusion/best.pt \
+  --device auto
+```
+
+Both decode uploads through `src.data.load_image` and score through
+`load_artifact` / `Predictor`, so neither can disagree with `predict.py`. See
+[`app/README.md`](app/README.md) for the full description.
 
 The demo shows the clean probability, thresholded label, transformed scores,
 mean score drift, and class stability. Stability only means the answer changed
@@ -352,10 +373,14 @@ src/models/         backbone adapters, classifier, forensic branch, fusion
 src/training/       losses, trainer, validation, checkpoints, resume
 src/evaluation/     robustness metrics, error analysis, reporting
 src/inference/      artifact loading, batch prediction, product reports
-app/                Streamlit demo
+app/                Streamlit demos: studio.py (judging), streamlit_app.py
+scripts/            dataset download/export and GPU readiness checks
+notebooks/          guided Colab GPU run
+results/            committed evaluation reports for each published run
 train.py            training entry point
 evaluate.py         held-out robustness evaluation
 predict.py          required competition directory inference
+ERROR_ANALYSIS.md   false positives, false negatives, and trade-offs
 tests/              download-free unit and integration coverage
 ```
 
