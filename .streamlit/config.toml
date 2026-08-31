@@ -12,7 +12,8 @@ textColor = "#E8EDF5"
 font = "sans serif"
 
 [server]
-maxUploadSize = 25
+# Phone photos are routinely 10-40 MB; 25 was rejecting real uploads.
+maxUploadSize = 200
 
 [browser]
 gatherUsageStats = false

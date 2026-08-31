@@ -35,6 +35,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from app.formats import UPLOAD_TYPES, unsupported_note  # noqa: E402
 from app.spectral import ambient, pair_strip, spectral_distance  # noqa: E402
 from app.theme import ACCENT, ACCENT_WARM, INK, MUTED, RULE, STABLE, css  # noqa: E402
 from src.data import describe_eval_transforms, get_eval_transform, load_image  # noqa: E402
@@ -469,8 +470,9 @@ def main() -> None:
     with detector:
         uploaded = st.file_uploader(
             "Upload an image",
-            type=("jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"),
+            type=UPLOAD_TYPES,
             label_visibility="collapsed",
+            help="Accepted: %s" % unsupported_note(),
         )
         if uploaded is None:
             st.markdown(
