@@ -70,6 +70,48 @@ def test_ambient_renders_without_an_image():
     assert ambient(size=48).size == (48, 48)
 
 
+# -- upload formats --------------------------------------------------------
+# A judge photographing something on a phone hands us HEIC. Streamlit rejects an
+# unlisted extension in the browser before any of our code runs, so an omission
+# here looks like the app refusing the picture for no reason.
+def test_uploader_accepts_the_common_photo_formats():
+    from app.formats import UPLOAD_TYPES
+
+    for extension in ("jpg", "jpeg", "png", "webp", "gif", "avif"):
+        assert extension in UPLOAD_TYPES
+
+
+def test_heic_is_offered_when_the_optional_opener_is_installed():
+    from app.formats import HEIC_AVAILABLE, UPLOAD_TYPES
+
+    if HEIC_AVAILABLE:
+        assert "heic" in UPLOAD_TYPES and "heif" in UPLOAD_TYPES
+    else:
+        assert "heic" not in UPLOAD_TYPES
+
+
+@pytest.mark.parametrize("fmt,extension", [("GIF", ".gif"), ("AVIF", ".avif")])
+def test_natively_supported_formats_decode_through_the_shared_loader(tmp_path, fmt, extension):
+    from src.data import load_image
+
+    path = tmp_path / ("photo" + extension)
+    _textured(96).save(path, format=fmt)
+    assert load_image(str(path), on_error="raise").mode == "RGB"
+
+
+def test_heic_decodes_when_available(tmp_path):
+    from app.formats import HEIC_AVAILABLE
+
+    if not HEIC_AVAILABLE:
+        pytest.skip("pillow-heif not installed")
+    from src.data import load_image
+
+    path = tmp_path / "photo.heic"
+    _textured(96).save(path, format="HEIF")
+    decoded = load_image(str(path), on_error="raise")
+    assert decoded.mode == "RGB" and decoded.size == (96, 96)
+
+
 # -- theme -----------------------------------------------------------------
 def test_css_defines_every_token_the_markup_uses():
     block = css()

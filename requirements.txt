@@ -4,3 +4,4 @@ PyYAML>=6.0
 torch>=2.1
 transformers>=4.48
 streamlit>=1.30
+pillow-heif>=0.15  # HEIC/HEIF decoding: the default iPhone and macOS photo format

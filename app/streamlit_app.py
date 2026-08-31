@@ -18,6 +18,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from app.formats import UPLOAD_TYPES  # noqa: E402
 from src.data import load_image  # noqa: E402
 from src.inference import InferenceError, Predictor, load_artifact  # noqa: E402
 
@@ -104,7 +105,7 @@ def main() -> None:
 
     uploaded = st.file_uploader(
         "Upload an image",
-        type=("jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"),
+        type=UPLOAD_TYPES,
     )
     if uploaded is None:
         st.info("Choose an image to begin.")
