@@ -11,8 +11,16 @@ threshold (0.4668375 baseline, 0.6042040 robustness-aware).
 Regenerate the underlying data with:
 
 ```bash
-python evaluate.py --checkpoint runs/<run>/best.pt --data <cifake_test> \
-  --output results/<run>/report.json
+python evaluate.py \
+  --manifest manifests/test.csv \
+  --model-factory src.models:create_model \
+  --model-kwargs '{"backbone":"dinov2","architecture":"fusion"}' \
+  --preprocess-factory src.models:create_preprocess \
+  --preprocess-kwargs '{"backbone":"dinov2"}' \
+  --checkpoint runs/robust_dino_fusion/best.pt \
+  --threshold 0.6042042 \
+  --output-dir results/robust_dino_fusion \
+  --save-predictions
 ```
 
 A note on the paths below: CIFAKE ships its own `train/` and `test/` folders,

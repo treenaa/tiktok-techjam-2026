@@ -10,7 +10,7 @@ The judging demo.
 
 ```bash
 streamlit run app/studio.py -- \
-  --checkpoint runs/baseline_dino_wildfake_v3/best.pt \
+  --checkpoint runs/robust_dino_fusion/best.pt \
   --device auto
 ```
 
@@ -47,7 +47,7 @@ The original, smaller panel.
 
 ```bash
 streamlit run app/streamlit_app.py -- \
-  --checkpoint runs/baseline_dino_wildfake_v3/best.pt \
+  --checkpoint runs/robust_dino_fusion/best.pt \
   --device auto
 ```
 

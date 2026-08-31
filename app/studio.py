@@ -390,7 +390,7 @@ def _onboarding() -> None:
         )
         st.code(
             "streamlit run app/studio.py -- \\\n"
-            "  --checkpoint runs/baseline_dino_wildfake_v3/best.pt \\\n"
+            "  --checkpoint runs/robust_dino_fusion/best.pt \\\n"
             "  --device auto",
             language="bash",
         )

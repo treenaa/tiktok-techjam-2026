@@ -16,6 +16,61 @@ image directory and writes only the probability of AIGC:
 `pred` is always `P(AI-generated)`. Models return raw logits; sigmoid is applied
 exactly once in inference.
 
+## Quickstart
+
+Everything below runs on CPU. Verified on a clean macOS/M4 checkout.
+
+```bash
+git clone https://github.com/treenaa/tiktok-techjam-2026.git
+cd tiktok-techjam-2026
+
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+python -m pip install -r requirements.txt
+
+# the final model (robustness-aware DINOv2 + FFT fusion)
+mkdir -p runs/robust_dino_fusion
+curl -L --fail -o runs/robust_dino_fusion/best.pt \
+  https://github.com/treenaa/tiktok-techjam-2026/releases/download/v0.1-baselines/robust_dino_fusion-best.pt
+
+sha256sum runs/robust_dino_fusion/best.pt    # macOS: shasum -a 256
+# expect 1fced519c8ecd6dc25b456c0ac872afa452b013a653b795cd24a8c483f39a20c
+
+# required competition inference
+python predict.py \
+  --input ./images \
+  --output predictions.json \
+  --checkpoint runs/robust_dino_fusion/best.pt \
+  --device auto
+
+# judging demo
+streamlit run app/studio.py -- \
+  --checkpoint runs/robust_dino_fusion/best.pt \
+  --device auto
+```
+
+**Downloads.** The checkpoint is ~348 MB. The first run also pulls the DINOv2
+backbone (~330 MB) from Hugging Face, so budget roughly **680 MB** and a working
+network on first execution. Both are cached afterwards; later runs are offline.
+
+**Timings** on an M4 CPU, once cached: ~3 s to load the model, ~0.3 s for the
+six-view analysis, ~0.9 s for all twenty transformations.
+
+### Tested environment
+
+`requirements.txt` carries lower bounds only. This exact combination was
+verified end to end on a clean machine:
+
+```text
+Python        3.12.7
+torch         2.13.0
+transformers  5.16.1
+streamlit     1.62.0
+Pillow        12.3.0
+numpy         2.5.2
+pillow-heif   1.6.0
+```
+
 ## Status
 
 The data, model, training, evaluation, inference, and demo code paths are
@@ -106,7 +161,8 @@ collapsed:
 | `resize_0.5` | 0.366 | 0.817 |
 | `blur_1.0` | 0.504 | 0.861 |
 
-19 of the 20 transforms improved on AUROC. The exception is `crop_0.80` at
+Clean AUROC and 18 of the 19 transformed conditions improved. The exception is
+`crop_0.80` at
 −0.0023, which is within run-to-run noise but is not claimed as an improvement.
 The recall gains are partly paid for in specificity under heavy degradation
 (at `resize_0.25`, 0.984 → 0.906): the baseline was not "safer", it had
