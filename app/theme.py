@@ -79,8 +79,17 @@ def css() -> str:
   color:var(--ink);
 }
 .stApp p, .stApp li, .stApp label{ color:var(--ink); }
-.block-container{ padding-top:2.2rem; padding-bottom:5rem; max-width:1180px; }
+/* Streamlit's toolbar is position:absolute and 60px tall, so it paints over the
+   top of the page rather than pushing it down. Streamlit's own default top
+   padding exists to clear it; anything smaller clips the first element. Keep
+   this comfortably above 60px. */
+.block-container{ padding-top:5rem; padding-bottom:5rem; max-width:1180px; }
 #MainMenu, footer{ visibility:hidden; }
+/* Let the ground show through the toolbar strip, and stop it swallowing clicks
+   on the masthead beneath it. */
+[data-testid="stHeader"]{ background:transparent; pointer-events:none; }
+[data-testid="stHeader"] button,
+[data-testid="stHeader"] a{ pointer-events:auto; }
 
 /* -- masthead -------------------------------------------------------- */
 .sx-mast{ display:flex; flex-direction:column; gap:.55rem;
