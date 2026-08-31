@@ -21,20 +21,31 @@ exactly once in inference.
 The data, model, training, evaluation, inference, and demo code paths are
 implemented and covered by download-free tests.
 
-Three phase-one baselines have been trained and evaluated on real data. Every
-number below comes from a real run recorded under `results/`; none is inferred
-from synthetic fixtures.
+Three phase-one baselines and one robustness-aware model have been trained and
+evaluated on real data. Every number below comes from a real run recorded under
+`results/`; none is inferred from synthetic fixtures.
+
+The robustness-aware run (`robust_dino_fusion`, `configs/robust_dino_fusion.yaml`)
+enables paired clean/transformed training, a prediction-consistency loss, and
+the FFT forensic branch. It shares its dataset, split, seed, schedule and
+threshold protocol with the CIFAKE baseline, so the two are directly
+comparable; see [Robustness-aware training](#robustness-aware-training).
 
 What has **not** been run yet, and is therefore not claimed anywhere:
 
 - CLIP and I-JEPA baselines (`configs/baseline_clip.yaml`,
   `configs/baseline_ijepa.yaml` exist but have no results).
-- Robustness-aware training. All three baselines use `augment: none`,
-  `consistency_weight: 0.0`, and `forensic_branch: false`. The paired
-  augmentation, consistency loss, and forensic branch are implemented but do
-  not contribute to any published number.
+- An ablation separating the three robustness interventions. Paired
+  augmentation, the consistency loss and the forensic branch were enabled
+  together in a single run, so no individual contribution is claimed — in
+  particular, the forensic branch is not shown to help on its own.
+- Any evaluation outside the training augmentation ranges. Improved robustness
+  is demonstrated on the corruption families the model was trained against; it
+  is not shown to transfer to unseen corruptions.
 - A combined multi-dataset model, and cross-dataset (train on A, test on B)
   generalisation.
+- The organisers' demonstration subset (COCO val2017 + DALL-E Advanced). It is
+  structurally blocked from training and has not been scored.
 
 ## Results
 
@@ -49,6 +60,9 @@ Each model was trained and tested on a single dataset with a source-grouped
 | SID_Set | 900 | 0.9353 | 0.9346 | 0.0007 | `jpeg_30` | 0.9322 | 0.019 |
 | WildFake | 600 | 0.9904 | 0.9831 | 0.0073 | `noise_0.10` | 0.9527 | 0.031 |
 
+These are the phase-one baselines. The robustness-aware model trained on CIFAKE
+is reported separately below, against the CIFAKE row.
+
 Read these with the following caveats:
 
 - The SID_Set and WildFake test sets are small (900 and 600 images). Their
@@ -57,9 +71,58 @@ Read these with the following caveats:
   destroy its signal: at `resize_0.25` accuracy falls to 0.561 and recall to
   0.138 while specificity stays at 0.984, i.e. the model stops calling anything
   AI-generated rather than making balanced mistakes. This is the failure mode
-  robustness-aware training is meant to address, and it has not been run yet.
+  the robustness-aware run below addresses.
 - Generator metadata is only populated for the WildFake run, so cross-generator
-  slices are empty in the other two reports.
+  slices are empty in the other reports.
+
+### Robustness-aware training
+
+`robust_dino_fusion` differs from the CIFAKE baseline in exactly four settings —
+`augment: competition`, `consistency_weight: 0.5`, the clean/augmented loss
+weights, and `forensic_branch: true`. Dataset, split, seed, schedule and
+threshold protocol are identical, so this is a controlled before/after on the
+same 18,000-image test set. The forensic branch adds 110,048 parameters
+(86,582,785 → 86,692,833) and no measurable throughput cost (227 images/s in
+both runs).
+
+| CIFAKE, n=18,000 | Baseline | Robustness-aware | Δ |
+|---|---|---|---|
+| Clean AUROC | 0.9867 | 0.9920 | +0.0053 |
+| Mean transformed AUROC | 0.9565 | 0.9713 | +0.0148 |
+| Mean AUROC drop | 0.0302 | 0.0207 | −0.0095 |
+| Worst transform (`resize_0.25`) | 0.8209 | 0.8796 | +0.0587 |
+| Mean class-flip rate | 0.144 | 0.067 | −0.077 |
+| Mean absolute score drift | 0.142 | 0.078 | −0.064 |
+
+Clean accuracy did not regress, so there is no robustness/accuracy trade-off in
+this run. The recall recovery is concentrated exactly where the baseline
+collapsed:
+
+| Recall (CIFAKE) | Baseline | Robustness-aware |
+|---|---|---|
+| `resize_0.25` | 0.138 | 0.637 |
+| `noise_0.10` | 0.156 | 0.850 |
+| `blur_2.0` | 0.232 | 0.724 |
+| `resize_0.5` | 0.366 | 0.817 |
+| `blur_1.0` | 0.504 | 0.861 |
+
+19 of the 20 transforms improved on AUROC. The exception is `crop_0.80` at
+−0.0023, which is within run-to-run noise but is not claimed as an improvement.
+The recall gains are partly paid for in specificity under heavy degradation
+(at `resize_0.25`, 0.984 → 0.906): the baseline was not "safer", it had
+degenerated into predicting `real` for almost everything. See
+[`ERROR_ANALYSIS.md`](ERROR_ANALYSIS.md).
+
+Two limits on how far this result can be read. The training augmentation samples
+continuous ranges that span every evaluated severity, so this demonstrates
+robustness on the trained corruption families rather than transfer to unseen
+ones. And all three interventions were enabled together, so the contribution of
+the forensic branch specifically is not established.
+
+Note that `python -m src.data.audit_cli compare` reports `robust_dino_fusion` as
+NOT COMPARABLE against the baselines. That is correct and expected: rule 21
+requires that only `model` varies, which is the right guard for the backbone
+comparison and deliberately not satisfied by an intervention run.
 
 Full per-transform metrics, stability, subgroup slices, representative errors,
 and runtime are in `results/<run>/report.json` and `results/<run>/robustness.csv`.
@@ -79,13 +142,21 @@ Each file is roughly 346 MB and contains the model, optimizer, scheduler, and
 scaler state plus the validation-selected threshold, so `predict.py` and
 `evaluate.py` can reconstruct the model without extra flags.
 
-| Run | Data | Validation threshold |
-|---|---|---|
-| `baseline_dino_real` | CIFAKE | 0.4668375 |
-| `baseline_dino_sidset` | SID_Set | 0.4877687 |
-| `baseline_dino_wildfake_v3` | WildFake | 0.3831851 |
+| Run | Data | Validation threshold | Published |
+|---|---|---|---|
+| `baseline_dino_real` | CIFAKE | 0.4668375 | yes |
+| `baseline_dino_sidset` | SID_Set | 0.4877687 | yes |
+| `baseline_dino_wildfake_v3` | WildFake | 0.3831851 | yes |
+| `robust_dino_fusion` | CIFAKE | 0.6042040 | **not yet** |
 
-Verify a download with `sha256sum`:
+> **`robust_dino_fusion` weights are not yet published.** Its evaluation
+> artifacts are committed under `results/robust_dino_fusion/`, but the
+> checkpoint has not been uploaded to a Release, so the run is currently
+> reproducible from `configs/robust_dino_fusion.yaml` rather than downloadable.
+> Its SHA-256 will be listed here once the asset is uploaded.
+
+Verify a download against the checksums below. Use `sha256sum` on Linux, or
+`shasum -a 256` on macOS:
 
 ```text
 bd2e27126805c474213cfca17a24479c6141426f1c156b80efa2ca9357f22a04  baseline_dino_real-best.pt
@@ -97,7 +168,8 @@ bd2e27126805c474213cfca17a24479c6141426f1c156b80efa2ca9357f22a04  baseline_dino_
 
 The project is designed to test three pretrained visual representations under
 the same split, head, training schedule, seed, and robustness benchmark. Only
-DINOv2 has been run so far; see Status.
+DINOv2 has been run so far; see Status. The robustness phase below has been run
+on DINOv2 and is reported in Results.
 
 Candidate backbones:
 
@@ -105,13 +177,17 @@ Candidate backbones:
 - DINOv2
 - CLIP
 
-The phase-one detector is a visual encoder plus a small binary head. After the
-winning backbone is selected empirically, the robustness model can add:
+The phase-one detector is a visual encoder plus a small binary head. The
+robustness model adds, on top of that backbone:
 
 - paired clean/transformed training;
 - prediction-consistency loss;
 - a lightweight forensic branch over normalized log FFT magnitude;
 - feature-level visual/forensic fusion.
+
+All four are enabled together in `robust_dino_fusion`, which is the run reported
+in Results. Because they were switched on in a single run, the results measure
+the combination and not any individual component.
 
 The forensic branch explicitly reverses the visual backbone's input
 normalization before the FFT. This avoids turning CLIP-versus-ImageNet scaling
@@ -296,6 +372,14 @@ tests/              download-free unit and integration coverage
   processing, and domains unlike training data may fail.
 - Dataset/source imbalance can create shortcuts despite leakage-safe splits;
   run and publish the shortcut audit.
+- The robustness gains are measured on the same corruption families the model
+  was trained against, at severities inside the training sampling ranges.
+  Nothing here shows transfer to a corruption type the model has never seen.
+- Paired augmentation, the consistency loss and the forensic branch were
+  enabled in one run, so their individual contributions are unknown.
+- Robustness was bought partly with specificity under heavy degradation, which
+  raises the false-positive rate on real images in exactly the conditions where
+  a moderation system would be least tolerant of it.
 - A stable prediction can still be consistently wrong.
 - Probability calibration may drift across domains and should be checked before
   interpreting a score as real-world confidence.
